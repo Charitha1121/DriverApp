@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "815374084739",
+    "firebase_url": "https://ruraltransport-54174-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "ruraltransport-54174",
+    "storage_bucket": "ruraltransport-54174.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:815374084739:android:bf99f5cf8e769577ae49b6",
+        "android_client_info": {
+          "package_name": "com.example.ruraltransport"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDd0pCvfNYAZBu_5aUCW_NktZw0AW2rrnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:815374084739:android:b672d83e1592cd0dae49b6",
+        "android_client_info": {
+          "package_name": "com.example.ruraltransportdriver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDd0pCvfNYAZBu_5aUCW_NktZw0AW2rrnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

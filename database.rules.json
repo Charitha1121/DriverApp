@@ -1,0 +1,33 @@
+{
+  "rules": {
+    "drivers": {
+      ".read": "auth != null",
+      "$driverId": {
+        // Driver can only write their own profile
+        // Driver CANNOT self-approve: approvalStatus cannot be modified by the driver once set
+        ".write": "auth != null && auth.uid == $driverId && (!data.exists() || !newData.hasChild('approvalStatus') || newData.child('approvalStatus').val() == data.child('approvalStatus').val())",
+        ".indexOn": ["approvalStatus", "isAvailable", "routeId"]
+      }
+    },
+    "driver_locations": {
+      ".read": "auth != null",
+      "$driverId": {
+        // Only the authenticated driver can publish their own GPS coordinates
+        ".write": "auth != null && auth.uid == $driverId",
+        ".indexOn": ["timestamp"]
+      }
+    },
+    "ride_requests": {
+      ".read": "auth != null",
+      ".indexOn": ["driverId", "status", "routeId", "passengerId"],
+      "$requestId": {
+        // Passengers create their requests; drivers accept PENDING requests or update active rides assigned to them
+        ".write": "auth != null && (!data.exists() || data.child('passengerId').val() == auth.uid || data.child('driverId').val() == auth.uid || (data.child('status').val() == 'PENDING' && (!data.hasChild('driverId') || data.child('driverId').val() == '')))"
+      }
+    },
+    "auto_status": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}
