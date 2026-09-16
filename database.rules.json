@@ -28,6 +28,10 @@
     "auto_status": {
       ".read": "auth != null",
       ".write": "auth != null"
+    },
+    "passenger_demand": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
   }
 }

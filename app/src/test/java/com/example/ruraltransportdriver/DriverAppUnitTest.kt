@@ -86,23 +86,58 @@ class DriverAppUnitTest {
 
         val route1 = RouteData.getRouteById("ROUTE_01")
         assertNotNull("ROUTE_01 must be defined", route1)
-        assertEquals("IBP", route1!!.stops.first())
-        assertEquals("Issdan", route1.stops.last())
+        assertEquals("Gurramguda", route1!!.stops.first())
+        assertEquals("Nadergul", route1.stops.last())
         assertEquals(4, route1.stops.size)
 
-        val route2 = RouteData.getRouteById("ROUTE_02")
-        assertNotNull("ROUTE_02 must be defined", route2)
-        assertEquals("Issdan", route2!!.stops.first())
-        assertEquals("IBP", route2.stops.last())
+        val legacyRoute = RouteData.getRouteById("GURRAMGUDA_NADERGUL")
+        assertNotNull("GURRAMGUDA_NADERGUL must resolve to corridor", legacyRoute)
+        assertEquals("Gurramguda", legacyRoute!!.stops.first())
     }
 
     @Test
-    fun routeData_invalidRouteId_fallsBackGracefully() {
-        val invalidRoute = RouteData.getRouteById("NON_EXISTENT")
-        assertNull(invalidRoute)
+    fun routeData_canonicalRouteNormalization() {
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId("ROUTE_01"))
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId("route_01"))
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId("GURRAMGUDA_NADERGUL"))
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId("gurramguda_nadergul"))
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId(""))
+        assertEquals("ROUTE_01", RouteData.canonicalRouteId(null))
 
-        val defaultStops = RouteData.getStopsForRoute("INVALID_ID")
-        assertTrue("Must return default fallback stops without crashing", defaultStops.isNotEmpty())
+        assertTrue(RouteData.isSameRoute("ROUTE_01", "GURRAMGUDA_NADERGUL"))
+        assertTrue(RouteData.isSameRoute("route_01", "ROUTE_01"))
+        assertTrue(RouteData.isSameRoute("", "ROUTE_01"))
+    }
+
+    @Test
+    fun rideRequest_passengerAppFieldAliasesReconciliation() {
+        val passengerRequest = RideRequest(
+            requestId = "req_101",
+            passengerId = "p_123",
+            pickupStopName = "Gurramguda",
+            destinationStopName = "Nadergul",
+            routeName = "Gurramguda — Nadergul Corridor",
+            createdAt = 1726467200000L,
+            requestedSeats = 2,
+            status = RideRequest.STATUS_PENDING
+        )
+
+        // Effective properties resolve passenger-written fields
+        assertEquals("Gurramguda", passengerRequest.effectivePickup())
+        assertEquals("Nadergul", passengerRequest.effectiveDestination())
+        assertEquals("Gurramguda — Nadergul Corridor", passengerRequest.effectiveRoute())
+        assertEquals(2, passengerRequest.effectiveSeats())
+        assertEquals("pending", passengerRequest.status)
+
+        // Driver-side copy reconciliation
+        val reconciled = passengerRequest.copy(
+            pickupStop = passengerRequest.effectivePickup(),
+            destinationStop = passengerRequest.effectiveDestination(),
+            route = passengerRequest.effectiveRoute()
+        )
+        assertEquals("Gurramguda", reconciled.pickupStop)
+        assertEquals("Nadergul", reconciled.destinationStop)
+        assertEquals("Gurramguda — Nadergul Corridor", reconciled.route)
     }
 
     // =========================================================
@@ -146,5 +181,36 @@ class DriverAppUnitTest {
         assertFalse(isValidPhone("12345"))
         assertFalse(isValidPhone("9876543210123"))
         assertFalse(isValidPhone("98765abcd0"))
+    }
+
+    // =========================================================
+    // 6. LIVE TRACKING DATA MODEL & BROADCAST SCHEMA
+    // =========================================================
+
+    @Test
+    fun liveTrackingData_defaultValuesAndStructure() {
+        val tracking = LiveTrackingData(
+            lat = 17.385044,
+            lng = 78.486671,
+            heading = 90.0f,
+            speed = 8.5f,
+            isRideActive = true,
+            lastUpdated = 1710000000000L
+        )
+
+        assertEquals(17.385044, tracking.lat, 0.00001)
+        assertEquals(78.486671, tracking.lng, 0.00001)
+        assertEquals(90.0f, tracking.heading, 0.01f)
+        assertEquals(8.5f, tracking.speed, 0.01f)
+        assertTrue(tracking.isRideActive)
+        assertEquals(1710000000000L, tracking.lastUpdated)
+
+        val defaultTracking = LiveTrackingData()
+        assertEquals(0.0, defaultTracking.lat, 0.0)
+        assertEquals(0.0, defaultTracking.lng, 0.0)
+        assertEquals(0f, defaultTracking.heading, 0.0f)
+        assertEquals(0f, defaultTracking.speed, 0.0f)
+        assertFalse(defaultTracking.isRideActive)
+        assertEquals(0L, defaultTracking.lastUpdated)
     }
 }

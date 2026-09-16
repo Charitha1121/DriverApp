@@ -6,6 +6,7 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import android.location.Location
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -22,6 +23,8 @@ class FirebaseRepository {
         const val NODE_RIDE_REQUESTS = "ride_requests"
         const val NODE_LOCATIONS = "driver_locations"
         const val NODE_AUTO_STATUS = "auto_status"
+        const val NODE_PASSENGER_DEMAND = "passenger_demand"
+        const val NODE_LIVE_TRACKING = "liveTracking"
     }
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -137,6 +140,11 @@ class FirebaseRepository {
             onError("Driver UID cannot be blank")
             return
         }
+        val authenticatedUid = currentUid
+        if (profile.uid != authenticatedUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
 
         database.child(NODE_DRIVERS).child(profile.uid)
             .setValue(profile)
@@ -176,6 +184,7 @@ class FirebaseRepository {
             }
 
             override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FirebaseRepository", "observeDriverProfile onCancelled: ${error.message} (code: ${error.code})")
                 onError(error.message)
             }
         }
@@ -195,13 +204,21 @@ class FirebaseRepository {
     fun updateDriverAvailability(
         uid: String,
         isAvailable: Boolean,
+        activeDirection: RouteDirection? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val updates = mapOf(
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+        val updates = mutableMapOf<String, Any>(
             "isAvailable" to isAvailable,
             "lastUpdated" to currentTime()
         )
+        if (activeDirection != null) {
+            updates["activeDirection"] = activeDirection.name
+        }
 
         database.child(NODE_DRIVERS).child(uid)
             .updateChildren(updates)
@@ -211,12 +228,39 @@ class FirebaseRepository {
             }
     }
 
+    fun updateDriverDirection(
+        uid: String,
+        direction: RouteDirection,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+        val updates = mapOf(
+            "activeDirection" to direction.name,
+            "lastUpdated" to currentTime()
+        )
+
+        database.child(NODE_DRIVERS).child(uid)
+            .updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update active direction")
+            }
+    }
+
     fun updateCurrentStop(
         uid: String,
         stop: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
         val updates = mapOf(
             "currentStop" to stop,
             "lastUpdated" to currentTime()
@@ -236,6 +280,10 @@ class FirebaseRepository {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
         val updates = mapOf(
             "availableSeats" to seats,
             "lastUpdated" to currentTime()
@@ -258,6 +306,10 @@ class FirebaseRepository {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (autoId != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
         val autoData = mapOf(
             "autoId" to autoId,
             "status" to status,
@@ -285,12 +337,26 @@ class FirebaseRepository {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val requests = snapshot.children.mapNotNull { child ->
-                    child.getValue(RideRequest::class.java)
+                    try {
+                        val req = child.getValue(RideRequest::class.java)
+                        if (req != null) {
+                            // Reconcile field aliases between PassengerApp and DriverApp
+                            req.copy(
+                                pickupStop = req.effectivePickup(),
+                                destinationStop = req.effectiveDestination(),
+                                route = req.effectiveRoute()
+                            )
+                        } else null
+                    } catch (e: Exception) {
+                        android.util.Log.e("FirebaseRepository", "Error deserializing ride request ${child.key}: ${e.message}", e)
+                        null
+                    }
                 }
                 onRequestsChanged(requests)
             }
 
             override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FirebaseRepository", "observeRideRequests onCancelled: ${error.message} (code: ${error.code})")
                 onError(error.message)
             }
         }
@@ -307,14 +373,29 @@ class FirebaseRepository {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val activeRide = snapshot.children.mapNotNull { child ->
-                    child.getValue(RideRequest::class.java)
+                    try {
+                        val req = child.getValue(RideRequest::class.java)
+                        if (req != null) {
+                            req.copy(
+                                pickupStop = req.effectivePickup(),
+                                destinationStop = req.effectiveDestination(),
+                                route = req.effectiveRoute()
+                            )
+                        } else null
+                    } catch (e: Exception) {
+                        null
+                    }
                 }.firstOrNull { req ->
-                    req.driverId == driverId && (req.status == RideRequest.STATUS_ACCEPTED || req.status == RideRequest.STATUS_IN_PROGRESS)
+                    req.driverId == driverId && (
+                        req.status.equals(RideRequest.STATUS_ACCEPTED, ignoreCase = true) ||
+                        req.status.equals(RideRequest.STATUS_IN_PROGRESS, ignoreCase = true)
+                    )
                 }
                 onActiveRideChanged(activeRide)
             }
 
             override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FirebaseRepository", "observeDriverActiveRide onCancelled: ${error.message} (code: ${error.code})")
                 onError(error.message)
             }
         }
@@ -352,6 +433,12 @@ class FirebaseRepository {
             return
         }
 
+        val authenticatedUid = currentUid
+        if (driver.uid != authenticatedUid || authenticatedUid == null) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+
         val requestRef = database.child(NODE_RIDE_REQUESTS).child(request.requestId)
 
         requestRef.runTransaction(object : com.google.firebase.database.Transaction.Handler {
@@ -365,7 +452,7 @@ class FirebaseRepository {
                 }
 
                 mutableData.child("status").value = RideRequest.STATUS_ACCEPTED
-                mutableData.child("driverId").value = driver.uid
+                mutableData.child("driverId").value = authenticatedUid
                 mutableData.child("acceptedAt").value = currentTime()
 
                 return com.google.firebase.database.Transaction.success(mutableData)
@@ -487,6 +574,10 @@ class FirebaseRepository {
         onError: (String) -> Unit = {}
     ) {
         if (location.driverId.isBlank()) return
+        if (location.driverId != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
 
         val locationData = mapOf(
             "driverId" to location.driverId,
@@ -504,6 +595,254 @@ class FirebaseRepository {
             .addOnFailureListener { error ->
                 onError(error.localizedMessage ?: "Failed to update driver location")
             }
+    }
+
+    // =========================================================
+    // LIVE POSITION SYNC FOR PASSENGERS
+    // Persisted under `drivers/{uid}/liveLocation`
+    // =========================================================
+
+    fun updateLiveLocation(
+        uid: String,
+        location: DriverLiveLocation,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (uid.isBlank()) return
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+
+        val locationData = mapOf(
+            "lat" to location.lat,
+            "lng" to location.lng,
+            "heading" to location.heading,
+            "speed" to location.speed,
+            "lastUpdated" to currentTime(),
+            "isOnline" to location.isOnline,
+            "routeId" to location.routeId,
+            "activeDirection" to location.activeDirection,
+            "currentStop" to location.currentStop
+        )
+
+        database.child(NODE_DRIVERS).child(uid).child("liveLocation")
+            .setValue(locationData)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update live location")
+            }
+    }
+
+    fun setLiveLocationOffline(
+        uid: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (uid.isBlank()) return
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+
+        val updates = mapOf(
+            "isOnline" to false,
+            "lastUpdated" to currentTime()
+        )
+
+        database.child(NODE_DRIVERS).child(uid).child("liveLocation")
+            .updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update live location offline status")
+            }
+    }
+
+    // =========================================================
+    // LIVE TRACKING BROADCAST FOR PASSENGERS (RAPIDO/OLA/UBER STYLE)
+    // Persisted under `drivers/{uid}/liveTracking`
+    // =========================================================
+
+    /**
+     * Broadcasts live GPS coordinates, heading, speed, and ride active status
+     * under `drivers/{uid}/liveTracking` for passenger live map rendering.
+     * Arms Firebase onDisconnect() to automatically reset isRideActive to false
+     * if the driver loses connection or app is closed.
+     */
+    fun updateLiveTracking(
+        uid: String,
+        location: Location,
+        isRideActive: Boolean,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (uid.isBlank()) return
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+
+        val trackingRef = database.child(NODE_DRIVERS).child(uid).child(NODE_LIVE_TRACKING)
+
+        // Setup onDisconnect cleanup: if client disconnects, isRideActive becomes false automatically
+        trackingRef.child("isRideActive").onDisconnect().setValue(false)
+
+        val trackingData = mapOf(
+            "lat" to location.latitude,
+            "lng" to location.longitude,
+            "heading" to location.bearing,
+            "speed" to location.speed,
+            "isRideActive" to isRideActive,
+            "lastUpdated" to System.currentTimeMillis()
+        )
+
+        trackingRef.updateChildren(trackingData)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update live tracking")
+            }
+    }
+
+    /**
+     * Directly updates isRideActive status and lastUpdated timestamp under `drivers/{uid}/liveTracking`.
+     * Useful for immediate state changes when a ride starts, completes, or location sharing stops.
+     */
+    fun setLiveTrackingRideActive(
+        uid: String,
+        isRideActive: Boolean,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (uid.isBlank()) return
+        if (uid != currentUid) {
+            onError("Permission denied: Authentication ownership mismatch")
+            return
+        }
+
+        val trackingRef = database.child(NODE_DRIVERS).child(uid).child(NODE_LIVE_TRACKING)
+        if (isRideActive) {
+            trackingRef.child("isRideActive").onDisconnect().setValue(false)
+        }
+
+        val updates = mapOf(
+            "isRideActive" to isRideActive,
+            "lastUpdated" to System.currentTimeMillis()
+        )
+
+        trackingRef.updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update live tracking active status")
+            }
+    }
+
+    /**
+     * Explicitly registers onDisconnect cleanup to set isRideActive = false.
+     * Enforces continuous resiliency across reconnections.
+     */
+    fun setupLiveTrackingOnDisconnect(uid: String) {
+        if (uid.isBlank()) return
+        if (uid != currentUid) return
+
+        val trackingRef = database.child(NODE_DRIVERS).child(uid).child(NODE_LIVE_TRACKING).child("isRideActive")
+        trackingRef.onDisconnect().setValue(false)
+
+        // Resiliency loop: listen to client connection lifecycle state changes to re-arm onDisconnect listeners
+        database.child(".info/connected").addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val connected = snapshot.getValue(Boolean::class.java) ?: false
+                if (connected) {
+                    trackingRef.onDisconnect().setValue(false)
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FirebaseRepository", ".info/connected onCancelled: ${error.message} (code: ${error.code})")
+            }
+        })
+    }
+
+    // =========================================================
+    // DIRECTION-AWARE PASSENGER DEMAND
+    // =========================================================
+
+    /**
+     * Observes demand for a specific route and direction:
+     * `passenger_demand/{routeId}/{direction.name}`
+     * Returns a map of stopName -> waitingCount
+     */
+    fun observeDirectionDemand(
+        routeId: String,
+        direction: RouteDirection,
+        onDemandChanged: (Map<String, Int>) -> Unit,
+        onError: (String) -> Unit
+    ): ValueEventListener {
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                android.util.Log.d(
+                    "FIREBASE_AUDIT",
+                    "Raw passenger demand snapshot at ${snapshot.ref.path}: ${snapshot.value}"
+                )
+                val demandMap = mutableMapOf<String, Int>()
+                for (child in snapshot.children) {
+                    val stopName = child.key ?: continue
+
+                    // Priority 1: Count active waiting passengers from children count (supports live onDisconnect cleanup)
+                    val activeChildrenCount = if (child.hasChild("waitingPassengers")) {
+                        child.child("waitingPassengers").childrenCount.toInt()
+                    } else 0
+
+                    // Priority 2: Safely extract waitingCount if written as Number or String
+                    val waitingCountVal = when (val v = child.child("waitingCount").value) {
+                        is Number -> v.toInt()
+                        is String -> v.toIntOrNull() ?: 0
+                        else -> null
+                    }
+
+                    // Priority 3: Fallback to primitive value at the stop node
+                    val primitiveVal = when (val v = child.value) {
+                        is Number -> v.toInt()
+                        is String -> v.toIntOrNull() ?: 0
+                        else -> null
+                    }
+
+                    val count = when {
+                        activeChildrenCount > 0 -> activeChildrenCount
+                        waitingCountVal != null -> waitingCountVal
+                        primitiveVal != null -> primitiveVal
+                        else -> 0
+                    }
+
+                    demandMap[stopName] = count
+                    android.util.Log.d(
+                        "FIREBASE_AUDIT",
+                        "Parsed demand: stop='$stopName' -> count=$count (activeChildren=$activeChildrenCount, waitingCount=$waitingCountVal)"
+                    )
+                }
+                onDemandChanged(demandMap)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FirebaseRepository", "observeDirectionDemand onCancelled: ${error.message} (code: ${error.code})")
+                onError(error.message)
+            }
+        }
+
+        database.child(NODE_PASSENGER_DEMAND)
+            .child(routeId)
+            .child(direction.name)
+            .addValueEventListener(listener)
+        return listener
+    }
+
+    fun removeDemandListener(
+        routeId: String,
+        direction: RouteDirection,
+        listener: ValueEventListener
+    ) {
+        database.child(NODE_PASSENGER_DEMAND)
+            .child(routeId)
+            .child(direction.name)
+            .removeEventListener(listener)
     }
 
     // =========================================================
