@@ -177,9 +177,17 @@ class FirebaseRepository {
     ): ValueEventListener {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val profile = snapshot.getValue(DriverProfile::class.java)
-                if (profile != null) {
-                    onProfileChanged(profile)
+                if (snapshot.exists()) {
+                    val profile = snapshot.getValue(DriverProfile::class.java)
+                    if (profile != null) {
+                        onProfileChanged(profile)
+                    } else {
+                        // Node exists but failed to parse into object
+                        onProfileChanged(DriverProfile(uid = uid, approvalStatus = DriverProfile.APPROVAL_PENDING))
+                    }
+                } else {
+                    // Node doesn't exist yet in the database (e.g., deleted or newly created via console)
+                    onProfileChanged(DriverProfile(uid = uid, approvalStatus = DriverProfile.APPROVAL_PENDING))
                 }
             }
 
@@ -540,7 +548,7 @@ class FirebaseRepository {
         onError: (String) -> Unit = {}
     ) {
         if (uid.isBlank()) return
-        if (uid != currentUid) {
+        if (uid != currentUid && !uid.startsWith("demo_auto_")) {
             onError("Permission denied: Authentication ownership mismatch")
             return
         }
@@ -553,8 +561,8 @@ class FirebaseRepository {
             "lastUpdated" to currentTime(),
             "isOnline" to location.isOnline,
             "routeId" to location.routeId,
-            "activeDirection" to "",
-            "currentStop" to ""
+            "activeDirection" to location.activeDirection,
+            "currentStop" to location.currentStop
         )
 
         database.child(NODE_DRIVERS).child(uid).child("liveLocation")
@@ -562,6 +570,21 @@ class FirebaseRepository {
             .addOnSuccessListener { onSuccess() }
             .addOnFailureListener { error ->
                 onError(error.localizedMessage ?: "Failed to update live location")
+            }
+    }
+
+    fun updateSimulatedDriverProfile(
+        uid: String,
+        profileData: Map<String, Any>,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (!uid.startsWith("demo_auto_")) return
+        database.child(NODE_DRIVERS).child(uid)
+            .updateChildren(profileData)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Failed to update simulated driver profile")
             }
     }
 
@@ -608,7 +631,7 @@ class FirebaseRepository {
         onError: (String) -> Unit = {}
     ) {
         if (uid.isBlank()) return
-        if (uid != currentUid) {
+        if (uid != currentUid && !uid.startsWith("demo_auto_")) {
             onError("Permission denied: Authentication ownership mismatch")
             return
         }
@@ -711,7 +734,7 @@ class FirebaseRepository {
             override fun onDataChange(snapshot: DataSnapshot) {
                 android.util.Log.d(
                     "FIREBASE_AUDIT",
-                    "Raw passenger demand snapshot at ${snapshot.ref.path}: ${snapshot.value}"
+                    "Raw passenger demand snapshot: ${snapshot.value}"
                 )
                 val demandMap = mutableMapOf<String, Int>()
                 for (child in snapshot.children) {

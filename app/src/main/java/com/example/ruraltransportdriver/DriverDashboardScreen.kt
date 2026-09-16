@@ -21,7 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ruraltransportdriver.voice.VoiceSeatManager
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DriverDashboardScreen(
     initialProfile: DriverProfile,
@@ -98,6 +101,12 @@ fun DriverDashboardScreen(
 
     var showDirectionDialog by remember { mutableStateOf(false) }
     var selectedDirectionOption by remember { mutableStateOf(RouteDirection.FORWARD) }
+    var showDemoSimulator by remember { mutableStateOf(false) }
+
+    if (showDemoSimulator) {
+        DemoSimulatorScreen(onBack = { showDemoSimulator = false })
+        return
+    }
 
     val routeStops = remember(profile.routeId) {
         RouteData.getStopsInDirection(profile.routeId, RouteDirection.FORWARD)
@@ -237,7 +246,12 @@ fun DriverDashboardScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { showDemoSimulator = true }
+                )
+            ) {
                 Text(
                     text = "Welcome, ${profile.name.ifBlank { "Driver" }}",
                     style = MaterialTheme.typography.titleLarge,
