@@ -216,9 +216,6 @@ class FirebaseRepository {
             "isAvailable" to isAvailable,
             "lastUpdated" to currentTime()
         )
-        if (activeDirection != null) {
-            updates["activeDirection"] = activeDirection.name
-        }
 
         database.child(NODE_DRIVERS).child(uid)
             .updateChildren(updates)
@@ -234,21 +231,7 @@ class FirebaseRepository {
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        if (uid != currentUid) {
-            onError("Permission denied: Authentication ownership mismatch")
-            return
-        }
-        val updates = mapOf(
-            "activeDirection" to direction.name,
-            "lastUpdated" to currentTime()
-        )
-
-        database.child(NODE_DRIVERS).child(uid)
-            .updateChildren(updates)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { error ->
-                onError(error.localizedMessage ?: "Failed to update active direction")
-            }
+        onSuccess()
     }
 
     fun updateCurrentStop(
@@ -257,21 +240,7 @@ class FirebaseRepository {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        if (uid != currentUid) {
-            onError("Permission denied: Authentication ownership mismatch")
-            return
-        }
-        val updates = mapOf(
-            "currentStop" to stop,
-            "lastUpdated" to currentTime()
-        )
-
-        database.child(NODE_DRIVERS).child(uid)
-            .updateChildren(updates)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { error ->
-                onError(error.localizedMessage ?: "Failed to update current stop")
-            }
+        onSuccess()
     }
 
     fun updateAvailableSeats(
@@ -280,21 +249,7 @@ class FirebaseRepository {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        if (uid != currentUid) {
-            onError("Permission denied: Authentication ownership mismatch")
-            return
-        }
-        val updates = mapOf(
-            "availableSeats" to seats,
-            "lastUpdated" to currentTime()
-        )
-
-        database.child(NODE_DRIVERS).child(uid)
-            .updateChildren(updates)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { error ->
-                onError(error.localizedMessage ?: "Failed to update available seats")
-            }
+        onSuccess()
     }
 
     // Backward compatibility with legacy auto_status node
@@ -472,14 +427,7 @@ class FirebaseRepository {
                     return
                 }
 
-                // Decrement seats safely
-                val remainingSeats = (driver.availableSeats - neededSeats).coerceAtLeast(0)
-                updateAvailableSeats(
-                    uid = driver.uid,
-                    seats = remainingSeats,
-                    onSuccess = { onSuccess() },
-                    onError = { onSuccess() }
-                )
+                onSuccess()
             }
         })
     }
@@ -511,16 +459,7 @@ class FirebaseRepository {
         )
         database.child(NODE_RIDE_REQUESTS).child(request.requestId)
             .updateChildren(updates)
-            .addOnSuccessListener {
-                // Restore seats atomically
-                val restoredSeats = (driver.availableSeats + request.effectiveSeats()).coerceAtMost(driver.totalSeats)
-                updateAvailableSeats(
-                    uid = driver.uid,
-                    seats = restoredSeats,
-                    onSuccess = { onSuccess() },
-                    onError = { onSuccess() }
-                )
-            }
+            .addOnSuccessListener { onSuccess() }
             .addOnFailureListener { error -> onError(error.localizedMessage ?: "Failed to complete ride") }
     }
 
@@ -538,15 +477,7 @@ class FirebaseRepository {
         )
         database.child(NODE_RIDE_REQUESTS).child(request.requestId)
             .updateChildren(updates)
-            .addOnSuccessListener {
-                val restoredSeats = (driver.availableSeats + request.effectiveSeats()).coerceAtMost(driver.totalSeats)
-                updateAvailableSeats(
-                    uid = driver.uid,
-                    seats = restoredSeats,
-                    onSuccess = { onSuccess() },
-                    onError = { onSuccess() }
-                )
-            }
+            .addOnSuccessListener { onSuccess() }
             .addOnFailureListener { error -> onError(error.localizedMessage ?: "Failed to cancel ride") }
     }
 
@@ -622,8 +553,8 @@ class FirebaseRepository {
             "lastUpdated" to currentTime(),
             "isOnline" to location.isOnline,
             "routeId" to location.routeId,
-            "activeDirection" to location.activeDirection,
-            "currentStop" to location.currentStop
+            "activeDirection" to "",
+            "currentStop" to ""
         )
 
         database.child(NODE_DRIVERS).child(uid).child("liveLocation")

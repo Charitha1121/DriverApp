@@ -1,8 +1,11 @@
 package com.example.ruraltransportdriver
 
 import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,7 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ruraltransportdriver.voice.VoiceSeatManager
 
 @Composable
 fun DriverDashboardScreen(
@@ -25,14 +30,27 @@ fun DriverDashboardScreen(
 ) {
     val context = LocalContext.current
     val locationTracker = remember { LocationTracker(context) }
+    val voiceSeatManager = remember { VoiceSeatManager(context.applicationContext) }
+
+    val requiredPermissions = remember {
+        val list = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.RECORD_AUDIO
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        list.toTypedArray()
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+        val locGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
 
-        if (granted) {
+        if (locGranted) {
             dashboardViewModel.startLocationSharing(locationTracker)
         } else {
             dashboardViewModel.clearFeedback()
@@ -45,12 +63,27 @@ fun DriverDashboardScreen(
         }
     }
 
+    DisposableEffect(voiceSeatManager) {
+        dashboardViewModel.attachVoiceManager(voiceSeatManager, context)
+        onDispose {
+            voiceSeatManager.destroy()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val anyMissing = requiredPermissions.any { perm ->
+            ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED
+        }
+        if (anyMissing) {
+            permissionLauncher.launch(requiredPermissions)
+        }
+    }
+
     LaunchedEffect(initialProfile.uid) {
         dashboardViewModel.initialize(initialProfile)
     }
 
     val profile by dashboardViewModel.currentProfile.collectAsState()
-    val activeDirection by dashboardViewModel.activeDirection.collectAsState()
     val passengersWaitingAhead by dashboardViewModel.passengersWaitingAhead.collectAsState()
     val demandAheadBreakdown by dashboardViewModel.demandAheadBreakdown.collectAsState()
     val activeRide by dashboardViewModel.activeRide.collectAsState()
@@ -60,12 +93,14 @@ fun DriverDashboardScreen(
     val isOperating by dashboardViewModel.isOperating.collectAsState()
     val isSharingLocation by dashboardViewModel.isSharingLocation.collectAsState()
     val lastKnownLocation by dashboardViewModel.lastKnownLocation.collectAsState()
+    val isVoiceActive by dashboardViewModel.isVoiceActive.collectAsState()
+    val showManualSeatPromptFallback by dashboardViewModel.showManualSeatPromptFallback.collectAsState()
 
     var showDirectionDialog by remember { mutableStateOf(false) }
     var selectedDirectionOption by remember { mutableStateOf(RouteDirection.FORWARD) }
 
-    val routeStops = remember(profile.routeId, activeDirection) {
-        RouteData.getStopsInDirection(profile.routeId, activeDirection)
+    val routeStops = remember(profile.routeId) {
+        RouteData.getStopsInDirection(profile.routeId, RouteDirection.FORWARD)
     }
 
     val scrollState = rememberScrollState()
@@ -423,6 +458,87 @@ fun DriverDashboardScreen(
                     } else if (
                         ride.status == RideRequest.STATUS_IN_PROGRESS
                     ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Hands-free Active",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Hands-Free Active: Voice asks for seats automatically at vehicle stops",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        if (showManualSeatPromptFallback) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer
+                                ),
+                                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.MicOff,
+                                            contentDescription = "Voice Fallback",
+                                            tint = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Didn't catch that. Tap available seats:",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                    }
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        (0..profile.totalSeats).forEach { seats ->
+                                            Button(
+                                                onClick = {
+                                                    dashboardViewModel.updateAvailableSeats(seats)
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = if (profile.availableSeats == seats)
+                                                        MaterialTheme.colorScheme.error
+                                                    else
+                                                        MaterialTheme.colorScheme.surfaceVariant,
+                                                    contentColor = if (profile.availableSeats == seats)
+                                                        MaterialTheme.colorScheme.onError
+                                                    else
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            ) {
+                                                Text(text = seats.toString(), fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Button(
                             onClick = {
                                 dashboardViewModel.completeRide()
@@ -520,9 +636,8 @@ fun DriverDashboardScreen(
                             // Driver going offline
                             dashboardViewModel.toggleAvailability(false)
                         } else {
-                            // Driver going online -> ask for trip direction
-                            selectedDirectionOption = activeDirection
-                            showDirectionDialog = true
+                            // Driver going online
+                            dashboardViewModel.toggleAvailability(true, RouteDirection.FORWARD)
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -573,7 +688,7 @@ fun DriverDashboardScreen(
                         onClick = {},
                         label = {
                             Text(
-                                text = activeDirection.name,
+                                text = "FORWARD",
                                 fontWeight = FontWeight.Bold
                             )
                         },
@@ -588,7 +703,7 @@ fun DriverDashboardScreen(
                 }
 
                 Text(
-                    text = RouteData.getDirectionTitle(profile.routeId, activeDirection),
+                    text = "Online Corridor",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold
                 )
@@ -599,33 +714,7 @@ fun DriverDashboardScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (profile.isAvailable) {
-                    OutlinedButton(
-                        onClick = {
-                            val nextDir = if (activeDirection == RouteDirection.FORWARD)
-                                RouteDirection.REVERSE
-                            else
-                                RouteDirection.FORWARD
-                            dashboardViewModel.switchDirection(nextDir)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isOperating
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = "Switch Direction"
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Reverse Direction (${
-                                RouteData.getDirectionTitle(
-                                    profile.routeId,
-                                    if (activeDirection == RouteDirection.FORWARD) RouteDirection.REVERSE else RouteDirection.FORWARD
-                                )
-                            })"
-                        )
-                    }
-                }
+                if (false) {}
             }
         }
 
@@ -701,7 +790,7 @@ fun DriverDashboardScreen(
                     }
 
                     Text(
-                        text = "Travelling ${RouteData.getDirectionTitle(profile.routeId, activeDirection)} • Current stop: ${profile.currentStop}",
+                        text = "Travelling on Gurramguda Corridor",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -710,8 +799,8 @@ fun DriverDashboardScreen(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                     )
 
-                    val stopsAhead = remember(profile.routeId, profile.currentStop, activeDirection) {
-                        RouteData.getStopsAhead(profile.routeId, profile.currentStop, activeDirection)
+                    val stopsAhead = remember(profile.routeId, profile.currentStop) {
+                        RouteData.getStopsAhead(profile.routeId, profile.currentStop, RouteDirection.FORWARD)
                     }
 
                     if (stopsAhead.isEmpty()) {
@@ -859,10 +948,7 @@ fun DriverDashboardScreen(
                             } else {
 
                                 permissionLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
-                                    )
+                                    requiredPermissions
                                 )
                             }
                         }

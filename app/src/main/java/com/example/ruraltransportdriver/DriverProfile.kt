@@ -23,11 +23,9 @@ data class DriverProfile(
     val routeName: String =
         "Gurramguda → Jay Suryapatnam → Sphoorthy College → Nadergul",
 
-    // Active travel direction along the route corridor
     val activeDirection: RouteDirection = RouteDirection.FORWARD,
 
-    // First stop of the route
-    val currentStop: String = "Gurramguda",
+    val currentStop: String = "",
 
     @get:PropertyName("isAvailable")
     @set:PropertyName("isAvailable")

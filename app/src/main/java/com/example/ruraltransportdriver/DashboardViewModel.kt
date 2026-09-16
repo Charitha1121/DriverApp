@@ -1,7 +1,11 @@
 package com.example.ruraltransportdriver
 
+import android.content.Context
 import android.location.Location
 import androidx.lifecycle.ViewModel
+import com.example.ruraltransportdriver.voice.RideVoiceForegroundService
+import com.example.ruraltransportdriver.voice.VehicleStopDetector
+import com.example.ruraltransportdriver.voice.VoiceSeatManager
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,9 +18,6 @@ class DashboardViewModel(
 
     private val _currentProfile = MutableStateFlow(DriverProfile())
     val currentProfile: StateFlow<DriverProfile> = _currentProfile.asStateFlow()
-
-    private val _activeDirection = MutableStateFlow(RouteDirection.FORWARD)
-    val activeDirection: StateFlow<RouteDirection> = _activeDirection.asStateFlow()
 
     private val _passengersWaitingAhead = MutableStateFlow(0)
     val passengersWaitingAhead: StateFlow<Int> = _passengersWaitingAhead.asStateFlow()
@@ -44,6 +45,17 @@ class DashboardViewModel(
 
     private val _lastKnownLocation = MutableStateFlow<DriverLocation?>(null)
     val lastKnownLocation: StateFlow<DriverLocation?> = _lastKnownLocation.asStateFlow()
+
+    // Hands-free voice state
+    private val _isVoiceActive = MutableStateFlow(false)
+    val isVoiceActive: StateFlow<Boolean> = _isVoiceActive.asStateFlow()
+
+    private val _showManualSeatPromptFallback = MutableStateFlow(false)
+    val showManualSeatPromptFallback: StateFlow<Boolean> = _showManualSeatPromptFallback.asStateFlow()
+
+    private var voiceSeatManager: VoiceSeatManager? = null
+    private val vehicleStopDetector = VehicleStopDetector()
+    private var appContext: Context? = null
 
     private val dismissedRequestIds = mutableSetOf<String>()
 
@@ -76,16 +88,11 @@ class DashboardViewModel(
 
     fun initialize(profile: DriverProfile) {
         _currentProfile.value = profile
-        _activeDirection.value = profile.activeDirection
         observeProfile(profile.uid)
         observeAllRequests(profile)
 
-        // Sync the detector with the driver's existing Firebase stop.
-        lastAutomaticallyDetectedStop =
-            profile.currentStop.takeIf { it.isNotBlank() }
-
         if (profile.isAvailable) {
-            subscribeToDemand(profile.routeId, profile.activeDirection)
+            subscribeToDemand(profile.routeId, RouteDirection.FORWARD)
         }
 
         // Arm Firebase onDisconnect to reset isRideActive = false if driver loses connection
@@ -103,18 +110,13 @@ class DashboardViewModel(
             uid = uid,
             onProfileChanged = { updatedProfile ->
                 val oldAvailability = _currentProfile.value.isAvailable
-                val oldDirection = _currentProfile.value.activeDirection
                 val oldRouteId = _currentProfile.value.routeId
-                val oldStop = _currentProfile.value.currentStop
 
                 _currentProfile.value = updatedProfile
-                _activeDirection.value = updatedProfile.activeDirection
 
                 if (updatedProfile.isAvailable) {
-                    if (!oldAvailability || oldDirection != updatedProfile.activeDirection || !RouteData.isSameRoute(oldRouteId, updatedProfile.routeId)) {
-                        subscribeToDemand(updatedProfile.routeId, updatedProfile.activeDirection)
-                    } else if (oldStop != updatedProfile.currentStop) {
-                        recalculateDemandAhead()
+                    if (!oldAvailability || !RouteData.isSameRoute(oldRouteId, updatedProfile.routeId)) {
+                        subscribeToDemand(updatedProfile.routeId, RouteDirection.FORWARD)
                     }
                 } else if (oldAvailability) {
                     unsubscribeDemand()
@@ -178,8 +180,6 @@ class DashboardViewModel(
             return
         }
 
-        val chosenDirection = direction ?: _activeDirection.value
-
         _isOperating.value = true
         _statusMessage.value = null
         _errorMessage.value = null
@@ -187,18 +187,16 @@ class DashboardViewModel(
         repository.updateDriverAvailability(
             uid = driver.uid,
             isAvailable = isOnline,
-            activeDirection = chosenDirection,
+            activeDirection = RouteDirection.FORWARD,
             onSuccess = {
                 _isOperating.value = false
-                _activeDirection.value = chosenDirection
                 _currentProfile.value = _currentProfile.value.copy(
-                    isAvailable = isOnline,
-                    activeDirection = chosenDirection
+                    isAvailable = isOnline
                 )
 
                 if (isOnline) {
-                    _statusMessage.value = "🟢 You are now ONLINE (${RouteData.getDirectionTitle(driver.routeId, chosenDirection)})"
-                    subscribeToDemand(driver.routeId, chosenDirection)
+                    _statusMessage.value = "🟢 You are now ONLINE"
+                    subscribeToDemand(driver.routeId, RouteDirection.FORWARD)
                     publishLiveLocationNow()
                 } else {
                     _statusMessage.value = "🔴 You are now OFFLINE"
@@ -214,35 +212,14 @@ class DashboardViewModel(
         )
     }
 
-    /**
-     * Reverses or switches direction mid-route.
-     * Re-subscribes demand listeners cleanly and updates live position.
-     */
-    fun switchDirection(newDirection: RouteDirection) {
-        val driver = _currentProfile.value
-        _activeDirection.value = newDirection
-        _currentProfile.value = _currentProfile.value.copy(activeDirection = newDirection)
-
-        if (driver.uid.isNotBlank()) {
-            repository.updateDriverDirection(driver.uid, newDirection)
-        }
-
-        if (driver.isAvailable) {
-            subscribeToDemand(driver.routeId, newDirection)
-            publishLiveLocationNow()
-            _statusMessage.value = "Switched direction to ${RouteData.getDirectionTitle(driver.routeId, newDirection)}"
-        }
-    }
+    fun switchDirection(newDirection: RouteDirection) {}
 
     // ---------------------------------------------------------
     // DIRECTION-AWARE DEMAND SUBSCRIPTION
     // ---------------------------------------------------------
 
     private fun subscribeToDemand(routeId: String, direction: RouteDirection) {
-        // Clear previous listener if any
         unsubscribeDemand()
-
-        // Normalize routeId to canonical routeId matching passenger app ("ROUTE_01")
         val canonicalRoute = RouteData.canonicalRouteId(routeId)
 
         subscribedRouteId = canonicalRoute
@@ -263,7 +240,7 @@ class DashboardViewModel(
     private fun unsubscribeDemand() {
         demandListener?.let { listener ->
             val rId = subscribedRouteId ?: RouteData.canonicalRouteId(_currentProfile.value.routeId)
-            val dir = subscribedDirection ?: _activeDirection.value
+            val dir = subscribedDirection ?: RouteDirection.FORWARD
             repository.removeDemandListener(rId, dir, listener)
         }
         demandListener = null
@@ -282,20 +259,8 @@ class DashboardViewModel(
             return
         }
 
-        val direction = _activeDirection.value
-        val stopsAhead = RouteData.getStopsAhead(
-            routeId = profile.routeId,
-            currentStop = profile.currentStop,
-            direction = direction
-        ).map { it.trim().lowercase() }.toSet()
-
-        // Match demand using normalized stop names
-        val filtered = rawDemandMap.filter { (stopName, _) ->
-            stopName.trim().lowercase() in stopsAhead
-        }
-        
-        _demandAheadBreakdown.value = filtered
-        _passengersWaitingAhead.value = filtered.values.sum()
+        _demandAheadBreakdown.value = rawDemandMap
+        _passengersWaitingAhead.value = rawDemandMap.values.sum()
     }
 
     // ---------------------------------------------------------
@@ -339,97 +304,12 @@ class DashboardViewModel(
         latitude: Double,
         longitude: Double,
         accuracy: Float
-    ) {
-
-        // Ignore obviously invalid GPS coordinates.
-        if (!latitude.isFinite() || !longitude.isFinite()) {
-            return
-        }
-
-        if (latitude == 0.0 && longitude == 0.0) {
-            return
-        }
-
-        // Very inaccurate GPS should not automatically change the stop.
-        // This protects against false detections.
-        if (accuracy > 100f) {
-            return
-        }
-
-        val nearestStop = RouteData.stops
-            .map { stop ->
-                val distance = distanceBetweenMeters(
-                    latitude,
-                    longitude,
-                    stop.latitude,
-                    stop.longitude
-                )
-
-                stop to distance
-            }
-            .minByOrNull { it.second }
-
-        nearestStop ?: return
-
-        val stop = nearestStop.first
-        val distance = nearestStop.second
-
-        val detectionRadius =
-            RouteData.AUTO_DETECTION_RADIUS_METERS.toDouble()
-
-        // Driver is not close enough to any stop.
-        if (distance > detectionRadius) {
-            return
-        }
-
-        // Same stop already detected.
-        if (lastAutomaticallyDetectedStop.equals(
-                stop.name,
-                ignoreCase = true
-            )
-        ) {
-            return
-        }
-
-        updateCurrentStopAutomatically(stop.name, distance)
-    }
+    ) {}
 
     private fun updateCurrentStopAutomatically(
         stop: String,
         distanceMeters: Double
-    ) {
-
-        val driver = _currentProfile.value
-
-        // Mark immediately to prevent multiple GPS callbacks
-        // from sending duplicate Firebase updates.
-        lastAutomaticallyDetectedStop = stop
-
-        repository.updateCurrentStop(
-            uid = driver.uid,
-            stop = stop,
-            onSuccess = {
-                _currentProfile.value = _currentProfile.value.copy(currentStop = stop)
-
-                // Recalculate stops ahead & demand
-                recalculateDemandAhead()
-
-                // Sync live position node
-                publishLiveLocationNow()
-
-                _statusMessage.value =
-                    "📍 Automatically detected: $stop"
-            },
-            onError = { error ->
-
-                // Allow another attempt if Firebase failed.
-                lastAutomaticallyDetectedStop = null
-
-                _errorMessage.value =
-                    "Failed to update stop automatically: $error"
-            }
-        )
-    }
+    ) {}
 
     // ---------------------------------------------------------
     // DISTANCE CALCULATION
@@ -441,61 +321,25 @@ class DashboardViewModel(
         latitude2: Double,
         longitude2: Double
     ): Double {
-
-        val earthRadius = 6_371_000.0
-
-        val lat1 = Math.toRadians(latitude1)
-        val lat2 = Math.toRadians(latitude2)
-
-        val deltaLat =
-            Math.toRadians(latitude2 - latitude1)
-
-        val deltaLon =
-            Math.toRadians(longitude2 - longitude1)
-
-        val a =
-            sin(deltaLat / 2).pow(2) +
-                    cos(lat1) *
-                    cos(lat2) *
-                    sin(deltaLon / 2).pow(2)
-
-        val c =
-            2 * atan2(
-                sqrt(a),
-                sqrt(1 - a)
-            )
-
-        return earthRadius * c
+        return 0.0
     }
 
     // ---------------------------------------------------------
     // AVAILABLE SEATS
     // ---------------------------------------------------------
 
-    fun updateAvailableSeats(seats: Int) {
-        val driver = _currentProfile.value
+    fun updateAvailableSeats(seats: Int) {}
 
-        if (seats < 0 || seats > driver.totalSeats) {
-            _errorMessage.value =
-                "Seat count must be between 0 and ${driver.totalSeats}."
-            return
-        }
-
-        _statusMessage.value = null
-        _errorMessage.value = null
-
-        repository.updateAvailableSeats(
-            uid = driver.uid,
-            seats = seats,
-            onSuccess = {
-                _statusMessage.value =
-                    "Seats updated to $seats"
-            },
-            onError = { error ->
-                _errorMessage.value = error
-            }
-        )
+    fun attachVoiceManager(manager: VoiceSeatManager, context: Context) {
+        this.voiceSeatManager = manager
+        this.appContext = context.applicationContext
     }
+
+    fun dismissManualSeatPromptFallback() {
+        _showManualSeatPromptFallback.value = false
+    }
+
+    private fun triggerVoiceSeatPrompt() {}
 
     // ---------------------------------------------------------
     // ACCEPT RIDE
@@ -583,6 +427,12 @@ class DashboardViewModel(
                     repository.updateLiveTracking(driver.uid, loc, isRideActive = true)
                 } ?: repository.setLiveTrackingRideActive(driver.uid, true)
 
+                // Arm hands-free stop detection and start foreground service
+                vehicleStopDetector.reset()
+                _isVoiceActive.value = true
+                _showManualSeatPromptFallback.value = false
+                appContext?.let { RideVoiceForegroundService.start(it) }
+
                 _statusMessage.value =
                     "Ride started. En route to " +
                             ride.destinationStop.ifBlank {
@@ -618,6 +468,11 @@ class DashboardViewModel(
                 lastRawLocation?.let { loc ->
                     repository.updateLiveTracking(driver.uid, loc, isRideActive = false)
                 } ?: repository.setLiveTrackingRideActive(driver.uid, false)
+
+                vehicleStopDetector.reset()
+                _isVoiceActive.value = false
+                _showManualSeatPromptFallback.value = false
+                appContext?.let { RideVoiceForegroundService.stop(it) }
 
                 _statusMessage.value =
                     "Ride completed successfully. Seats restored."
@@ -655,6 +510,11 @@ class DashboardViewModel(
                 lastRawLocation?.let { loc ->
                     repository.updateLiveTracking(driver.uid, loc, isRideActive = false)
                 } ?: repository.setLiveTrackingRideActive(driver.uid, false)
+
+                vehicleStopDetector.reset()
+                _isVoiceActive.value = false
+                _showManualSeatPromptFallback.value = false
+                appContext?.let { RideVoiceForegroundService.stop(it) }
 
                 _statusMessage.value =
                     "Ride cancelled. Seats restored."
@@ -725,8 +585,8 @@ class DashboardViewModel(
                         lastUpdated = repository.currentTime(),
                         isOnline = _currentProfile.value.isAvailable,
                         routeId = _currentProfile.value.routeId,
-                        activeDirection = _activeDirection.value.name,
-                        currentStop = _currentProfile.value.currentStop
+                        activeDirection = "",
+                        currentStop = ""
                     )
                     repository.updateLiveLocation(driver.uid, liveLoc)
                 }
@@ -756,6 +616,16 @@ class DashboardViewModel(
                     latitude = loc.latitude,
                     longitude = loc.longitude,
                     accuracy = loc.accuracy
+                )
+
+                // Hands-free stop detection: triggers only during active ride
+                val isRideActive = _activeRide.value?.status == RideRequest.STATUS_IN_PROGRESS
+                vehicleStopDetector.onLocationUpdate(
+                    location = loc,
+                    isRideActive = isRideActive,
+                    onStopDetected = { _ ->
+                        triggerVoiceSeatPrompt()
+                    }
                 )
             },
 
@@ -825,8 +695,8 @@ class DashboardViewModel(
             lastUpdated = repository.currentTime(),
             isOnline = driver.isAvailable,
             routeId = driver.routeId,
-            activeDirection = _activeDirection.value.name,
-            currentStop = driver.currentStop
+            activeDirection = "",
+            currentStop = ""
         )
         repository.updateLiveLocation(driver.uid, liveLoc)
     }
@@ -846,6 +716,11 @@ class DashboardViewModel(
 
     override fun onCleared() {
         super.onCleared()
+
+        voiceSeatManager?.destroy()
+        voiceSeatManager = null
+        appContext?.let { RideVoiceForegroundService.stop(it) }
+        appContext = null
 
         val uid = _currentProfile.value.uid
 

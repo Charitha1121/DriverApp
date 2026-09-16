@@ -83,7 +83,7 @@ class LocationTracker(private val context: Context) {
 
                 setMinUpdateIntervalMillis(8000L)
 
-                setMinUpdateDistanceMeters(20f)
+                setMinUpdateDistanceMeters(0f)
 
                 setWaitForAccurateLocation(false)
 

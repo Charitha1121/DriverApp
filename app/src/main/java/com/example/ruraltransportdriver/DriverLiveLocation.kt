@@ -13,6 +13,6 @@ data class DriverLiveLocation(
     val lastUpdated: String = "",
     val isOnline: Boolean = false,
     val routeId: String = RouteData.ROUTE_ID,
-    val activeDirection: String = RouteDirection.FORWARD.name,
+    val activeDirection: String = "",
     val currentStop: String = ""
 )
