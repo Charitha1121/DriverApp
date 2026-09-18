@@ -78,10 +78,10 @@ class LocationTracker(private val context: Context) {
 
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                12000L
+                3000L
             ).apply {
 
-                setMinUpdateIntervalMillis(8000L)
+                setMinUpdateIntervalMillis(2000L)
 
                 setMinUpdateDistanceMeters(0f)
 

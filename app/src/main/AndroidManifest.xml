@@ -44,6 +44,13 @@
             android:name=".voice.RideVoiceForegroundService"
             android:foregroundServiceType="location|microphone"
             android:exported="false" />
+
+        <service
+            android:name=".SimForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_TYPE" android:value="Demo Simulation" />
+        </service>
     </application>
 
 </manifest>

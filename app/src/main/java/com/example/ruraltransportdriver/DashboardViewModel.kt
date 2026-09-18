@@ -578,8 +578,8 @@ class DashboardViewModel(
                     loc.longitude
                 )
 
-                // Throttle: write every 8 seconds, or if moved > 15 meters, or first tick
-                if (now - lastLiveLocationWriteTimestamp >= 8000L || distanceMoved >= 15.0 || lastLiveLocationWriteTimestamp == 0L) {
+                // Throttle: write every 3 seconds, or if moved > 5 meters, or first tick
+                if (now - lastLiveLocationWriteTimestamp >= 3000L || distanceMoved >= 5.0 || lastLiveLocationWriteTimestamp == 0L) {
                     lastLiveLocationWriteTimestamp = now
                     lastLiveLocationLat = loc.latitude
                     lastLiveLocationLng = loc.longitude
@@ -608,8 +608,8 @@ class DashboardViewModel(
                     loc.longitude
                 )
 
-                // Throttle: write every 3-5 seconds (4000ms), or if moved >= 10 meters, or first tick
-                if (now - lastLiveTrackingWriteTimestamp >= 4000L || liveTrackingDistanceMoved >= 10.0 || lastLiveTrackingWriteTimestamp == 0L) {
+                // Throttle: write every 2-3 seconds, or if moved >= 5 meters, or first tick
+                if (now - lastLiveTrackingWriteTimestamp >= 2500L || liveTrackingDistanceMoved >= 5.0 || lastLiveTrackingWriteTimestamp == 0L) {
                     lastLiveTrackingWriteTimestamp = now
                     lastLiveTrackingLat = loc.latitude
                     lastLiveTrackingLng = loc.longitude
@@ -652,6 +652,7 @@ class DashboardViewModel(
         )
 
         _isSharingLocation.value = true
+        appContext?.let { RideVoiceForegroundService.start(it) }
         _statusMessage.value =
             "GPS Location sharing started."
     }
