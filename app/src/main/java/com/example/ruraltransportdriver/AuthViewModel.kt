@@ -105,11 +105,15 @@ class AuthViewModel(
             return
         }
         if (routeId.isBlank()) {
-            _uiState.value = AuthUiState.Error("Please select a valid operating route.")
+            _uiState.value = AuthUiState.Error("Please submit a valid operating route.")
             return
         }
 
-        val initialStop = RouteData.getStopsForRoute(routeId).firstOrNull() ?: "Start"
+        val initialStop = if (routeName.contains(" – ") || routeName.contains(" - ")) {
+            routeName.split("–", "-")[0].trim()
+        } else {
+            "Start"
+        }
 
         val initialProfile = DriverProfile(
             uid = "",

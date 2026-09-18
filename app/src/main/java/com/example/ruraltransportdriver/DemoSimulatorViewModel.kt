@@ -29,6 +29,7 @@ class DemoSimulatorViewModel(application: Application) : AndroidViewModel(applic
     private val context = application.applicationContext
 
     companion object {
+        const val ROUTE_ID = "ROUTE_01"
         val waypointsList = listOf(
             DemoLatLng(17.29421, 78.56753), // Gurramguda Stop
             DemoLatLng(17.29150, 78.56620),
@@ -43,6 +44,8 @@ class DemoSimulatorViewModel(application: Application) : AndroidViewModel(applic
             DemoLatLng(17.27464, 78.53995)  // Nadergul Stop
         )
     }
+
+    val waypoints = waypointsList
 
     val auto1: StateFlow<AutoSimState> = SimForegroundService.auto1
     val auto2: StateFlow<AutoSimState> = SimForegroundService.auto2

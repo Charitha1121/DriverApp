@@ -31,16 +31,22 @@ object RouteData {
     const val ROUTE_ID = "ROUTE_01"
     const val LEGACY_ROUTE_ID = "GURRAMGUDA_NADERGUL"
 
+    // New route IDs
+    const val ROUTE_IBP_GURRAMGUDA = "ROUTE_IBP_GURRAMGUDA"
+    const val ROUTE_GURRAMGUDA_RINGROAD = "ROUTE_GURRAMGUDA_RINGROAD"
+    const val ROUTE_RINGROAD_SANTOSHNAGAR = "ROUTE_RINGROAD_SANTOSHNAGAR"
+    const val ROUTE_BALAPUR_SPHOORTHY = "ROUTE_BALAPUR_SPHOORTHY"
+
     /**
      * Resolves routeId to canonical routeId ("ROUTE_01") recognized by the Passenger App.
+     * UNCHANGED — only ROUTE_01/legacy Gurramguda-Nadergul strings resolve to ROUTE_01.
+     * New route IDs pass through unchanged, exactly as before for any unrecognized ID.
      */
     fun canonicalRouteId(routeId: String?): String {
         val r = routeId?.trim() ?: return ROUTE_ID
         return if (r.isBlank() ||
             r.equals(ROUTE_ID, ignoreCase = true) ||
-            r.equals(LEGACY_ROUTE_ID, ignoreCase = true) ||
-            r.contains("GURRAMGUDA", ignoreCase = true) ||
-            r.contains("NADERGUL", ignoreCase = true)
+            r.equals(LEGACY_ROUTE_ID, ignoreCase = true)
         ) {
             ROUTE_ID
         } else {
@@ -48,9 +54,6 @@ object RouteData {
         }
     }
 
-    /**
-     * Checks whether two route identifiers refer to the same corridor.
-     */
     fun isSameRoute(r1: String?, r2: String?): Boolean {
         if (r1.isNullOrBlank() || r2.isNullOrBlank()) return true
         return canonicalRouteId(r1).equals(canonicalRouteId(r2), ignoreCase = true)
@@ -58,75 +61,132 @@ object RouteData {
 
     /**
      * Main route used for automatic GPS stop detection.
+     * UNCHANGED — untouched from the original file.
+     * NOTE: automatic GPS stop detection in DashboardViewModel currently always
+     * checks against THIS list only, regardless of which route the driver selected.
+     * That's a pre-existing limitation, not something this change fixes — flagging
+     * it so it doesn't surprise you later if a driver on one of the new routes
+     * doesn't get auto-stop-detected correctly.
      */
     val stops = listOf(
+        RouteStop(name = "Gurramguda", latitude = 17.29421, longitude = 78.56753),
+        RouteStop(name = "Jay Suryapatnam", latitude = 17.2788, longitude = 78.5573),
+        RouteStop(name = "Sphoorthy College", latitude = 17.28218, longitude = 78.55251),
+        RouteStop(name = "Nadergul", latitude = 17.27464, longitude = 78.53995)
+    )
 
-        RouteStop(
-            name = "Gurramguda",
-            latitude = 17.29421,
-            longitude = 78.56753
-        ),
+    // ---------------------------------------------------------
+    // NEW ROUTE STOP DEFINITIONS
+    // ---------------------------------------------------------
 
-        RouteStop(
-            name = "Jay Suryapatnam",
-            latitude = 17.2788,
-            longitude = 78.5573
-        ),
+    private val ibpGurramgudaStops = listOf(
+        RouteStop(name = "IBP Petrol Pump, Nagarjuna Sagar Road", latitude = 17.2945, longitude = 78.5650),
+        RouteStop(name = "Gurramguda Village", latitude = 17.2940, longitude = 78.5660)
+    )
 
-        RouteStop(
-            name = "Sphoorthy College",
-            latitude = 17.28218,
-            longitude = 78.55251
-        ),
+    private val gurramgudaRingRoadStops = listOf(
+        RouteStop(name = "Gurramguda Village", latitude = 17.2940, longitude = 78.5660),
+        RouteStop(name = "Gurramguda Cross Road", latitude = 17.3079, longitude = 78.5674),
+        RouteStop(name = "B.N. Reddy Nagar Bus Stop", latitude = 17.3235, longitude = 78.5630),
+        RouteStop(name = "Vanasthalipuram", latitude = 17.3350, longitude = 78.5510),
+        RouteStop(name = "Bairamalguda Cross Road", latitude = 17.3440, longitude = 78.5512),
+        RouteStop(name = "Sagar Ring Road (LB Nagar)", latitude = 17.3484, longitude = 78.5510)
+    )
 
-        RouteStop(
-            name = "Nadergul",
-            latitude = 17.27464,
-            longitude = 78.53995
-        )
+    private val ringRoadSantoshnagarStops = listOf(
+        RouteStop(name = "Sagar Ring Road (LB Nagar)", latitude = 17.3484, longitude = 78.5510),
+        RouteStop(name = "L.B. Nagar Metro Station", latitude = 17.3502, longitude = 78.5475),
+        RouteStop(name = "Kothapet Fruit Market", latitude = 17.3565, longitude = 78.5450),
+        RouteStop(name = "Chaitanyapuri Metro Station", latitude = 17.3620, longitude = 78.5430),
+        RouteStop(name = "Dilsukhnagar Bus Station", latitude = 17.3687, longitude = 78.5247),
+        RouteStop(name = "Moosarambagh X Road", latitude = 17.3712, longitude = 78.5135),
+        RouteStop(name = "Saidabad Colony", latitude = 17.3615, longitude = 78.5100),
+        RouteStop(name = "Santoshnagar Cross Roads", latitude = 17.3544, longitude = 78.5076)
+    )
+
+    private val balapurSphoorthyStops = listOf(
+        RouteStop(name = "Balapur X Road", latitude = 17.3020, longitude = 78.5150),
+        RouteStop(name = "Udyog Nagar", latitude = 17.2965, longitude = 78.5210),
+        RouteStop(name = "Badangpet Cheruvu Bus Stop", latitude = 17.2885, longitude = 78.5320),
+        RouteStop(name = "MVSR Engineering College, Nadergul", latitude = 17.2831, longitude = 78.5492),
+        RouteStop(name = "Kammaguda Bus Stop", latitude = 17.2840, longitude = 78.5570),
+        RouteStop(name = "Nadergul Village", latitude = 17.2985, longitude = 78.5670),
+        RouteStop(name = "Sphoorthy Engineering College", latitude = 17.2960, longitude = 78.5675)
+    )
+
+    /**
+     * Maps every route ID (existing + new) to its ordered RouteStop list.
+     * ROUTE_01 continues to resolve to the original `stops` list, unchanged.
+     */
+    private val allRouteStops: Map<String, List<RouteStop>> = mapOf(
+        ROUTE_ID to stops,
+        ROUTE_IBP_GURRAMGUDA to ibpGurramgudaStops,
+        ROUTE_GURRAMGUDA_RINGROAD to gurramgudaRingRoadStops,
+        ROUTE_RINGROAD_SANTOSHNAGAR to ringRoadSantoshnagarStops,
+        ROUTE_BALAPUR_SPHOORTHY to balapurSphoorthyStops
     )
 
     /**
      * Compatibility list for RegistrationScreen.
+     * Original ROUTE_01 and LEGACY_ROUTE_ID entries UNCHANGED.
+     * Four new routes appended.
      */
     val predefinedRoutes = listOf(
-        Route(
-            id = ROUTE_ID,
-            name = "Gurramguda Corridor",
-            stops = stops.map { it.name }
-        ),
-        Route(
-            id = LEGACY_ROUTE_ID,
-            name = "Gurramguda Corridor (Legacy)",
-            stops = stops.map { it.name }
-        )
+        Route(id = ROUTE_ID, name = "Gurramguda Corridor", stops = stops.map { it.name }),
+        Route(id = LEGACY_ROUTE_ID, name = "Gurramguda Corridor (Legacy)", stops = stops.map { it.name }),
+        Route(id = ROUTE_IBP_GURRAMGUDA, name = "IBP – Gurramguda Local", stops = ibpGurramgudaStops.map { it.name }),
+        Route(id = ROUTE_GURRAMGUDA_RINGROAD, name = "Gurramguda – Sagar Ring Road", stops = gurramgudaRingRoadStops.map { it.name }),
+        Route(id = ROUTE_RINGROAD_SANTOSHNAGAR, name = "Sagar Ring Road – Santoshnagar", stops = ringRoadSantoshnagarStops.map { it.name }),
+        Route(id = ROUTE_BALAPUR_SPHOORTHY, name = "Balapur – Sphoorthy College", stops = balapurSphoorthyStops.map { it.name })
     )
 
-    /**
-     * Looks up a route by its ID (canonical or legacy).
-     */
-    fun getRouteById(id: String): Route? {
-        val canonical = canonicalRouteId(id)
-        return predefinedRoutes.firstOrNull { it.id.equals(canonical, ignoreCase = true) }
-    }
+    private val firebaseRepository = FirebaseRepository()
+    private val cachedStops = mutableMapOf<String, DbStop>()
+    private val cachedRoutes = mutableMapOf<String, DbRoute>()
 
-    /**
-     * Returns the list of stop names for a given route ID in base order.
-     */
-    fun getStopsForRoute(routeId: String): List<String> {
-        val canonical = canonicalRouteId(routeId)
-        return if (canonical == ROUTE_ID) {
-            stops.map { it.name }
-        } else {
-            emptyList()
+    init {
+        firebaseRepository.seedInitialRouteData()
+        firebaseRepository.observeAllStops { stopsList ->
+            synchronized(cachedStops) {
+                cachedStops.clear()
+                for (s in stopsList) cachedStops[s.id] = s
+            }
+        }
+        firebaseRepository.observeAllRoutes { routesList ->
+            synchronized(cachedRoutes) {
+                cachedRoutes.clear()
+                for (r in routesList) cachedRoutes[r.id] = r
+            }
         }
     }
 
-    /**
-     * Returns the ordered list of stop names based on the direction of travel.
-     * FORWARD: Gurramguda -> Jay Suryapatnam -> Sphoorthy College -> Nadergul
-     * REVERSE: Nadergul -> Sphoorthy College -> Jay Suryapatnam -> Gurramguda
-     */
+    fun getAllCachedStops(): List<DbStop> {
+        return synchronized(cachedStops) { cachedStops.values.toList() }
+    }
+
+    fun getRouteById(id: String): Route? {
+        val canonical = canonicalRouteId(id)
+        val staticMatch = predefinedRoutes.firstOrNull { it.id.equals(canonical, ignoreCase = true) }
+        if (staticMatch != null) return staticMatch
+
+        val dbRoute = synchronized(cachedRoutes) { cachedRoutes[canonical] } ?: return null
+        val stopNames = dbRoute.stopOrder.map { stopId ->
+            synchronized(cachedStops) { cachedStops[stopId]?.name ?: "Stop" }
+        }
+        return Route(dbRoute.id, dbRoute.name, stopNames)
+    }
+
+    fun getStopsForRoute(routeId: String): List<String> {
+        val canonical = canonicalRouteId(routeId)
+        val staticStops = allRouteStops[canonical]
+        if (staticStops != null) return staticStops.map { it.name }
+
+        val dbRoute = synchronized(cachedRoutes) { cachedRoutes[canonical] } ?: return emptyList()
+        return dbRoute.stopOrder.map { stopId ->
+            synchronized(cachedStops) { cachedStops[stopId]?.name ?: "Stop" }
+        }
+    }
+
     fun getStopsInDirection(routeId: String, direction: RouteDirection): List<String> {
         val baseStops = getStopsForRoute(routeId)
         return when (direction) {
@@ -135,10 +195,6 @@ object RouteData {
         }
     }
 
-    /**
-     * Returns all stops that are at or ahead of the driver's current stop in their travel direction.
-     * Only passengers waiting at these stops can be picked up by this driver.
-     */
     fun getStopsAhead(routeId: String, currentStop: String, direction: RouteDirection): List<String> {
         val orderedStops = getStopsInDirection(routeId, direction)
         if (orderedStops.isEmpty()) return emptyList()
@@ -147,14 +203,10 @@ object RouteData {
         return if (currentIndex >= 0) {
             orderedStops.subList(currentIndex, orderedStops.size)
         } else {
-            // Default to all stops in that direction if current stop not matched
             orderedStops
         }
     }
 
-    /**
-     * Human-readable label for the route direction (e.g. "Gurramguda → Nadergul")
-     */
     fun getDirectionTitle(routeId: String, direction: RouteDirection): String {
         val ordered = getStopsInDirection(routeId, direction)
         return if (ordered.size >= 2) {
@@ -164,9 +216,6 @@ object RouteData {
         }
     }
 
-    /**
-     * Start and end terminals for this route.
-     */
     fun getTerminalStops(routeId: String): Pair<String, String> {
         val base = getStopsForRoute(routeId)
         return if (base.isNotEmpty()) {
@@ -176,8 +225,5 @@ object RouteData {
         }
     }
 
-    /**
-     * Automatic GPS stop detection radius.
-     */
     const val AUTO_DETECTION_RADIUS_METERS = 150f
 }

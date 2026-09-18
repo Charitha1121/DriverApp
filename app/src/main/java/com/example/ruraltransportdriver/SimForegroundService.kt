@@ -11,12 +11,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.util.Locale
 
 class SimForegroundService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var simJob: Job? = null
     private val repository = FirebaseRepository()
+    private val engines = mutableMapOf<String, AutoSimEngine>()
 
     companion object {
         private const val CHANNEL_ID = "sim_channel"
@@ -31,6 +32,8 @@ class SimForegroundService : Service() {
             AutoSimState("demo_auto_2", "Demo Auto 2", "TS 09 DEMO 2", currentLat = 17.27880, currentLng = 78.55730, currentWaypointIndex = 5)
         )
         val auto2: StateFlow<AutoSimState> = _auto2.asStateFlow()
+
+        private var instance: SimForegroundService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, SimForegroundService::class.java)
@@ -47,36 +50,19 @@ class SimForegroundService : Service() {
         }
 
         fun toggleStartPause(uid: String) {
-            val flow = if (uid == "demo_auto_1") _auto1 else _auto2
-            flow.update { it.copy(isRunning = !it.isRunning) }
+            instance?.engines?.get(uid)?.toggleRunning()
         }
 
         fun updateSpeed(uid: String, speedMs: Float) {
-            val flow = if (uid == "demo_auto_1") _auto1 else _auto2
-            flow.update { it.copy(speedMs = speedMs) }
+            instance?.engines?.get(uid)?.updateSpeed(speedMs)
         }
 
         fun jumpToWaypoint(uid: String, index: Int, waypoints: List<DemoLatLng>) {
-            val flow = if (uid == "demo_auto_1") _auto1 else _auto2
-            val safeIndex = index.coerceIn(0, waypoints.size - 1)
-            val p = waypoints[safeIndex]
-            val nextIndex = if (safeIndex < waypoints.size - 1) safeIndex else safeIndex - 1
-            val heading = calculateHeading(waypoints[nextIndex].lat, waypoints[nextIndex].lng, waypoints[nextIndex + 1].lat, waypoints[nextIndex + 1].lng)
-
-            flow.update {
-                it.copy(
-                    currentWaypointIndex = safeIndex,
-                    fraction = 0.0,
-                    currentLat = p.lat,
-                    currentLng = p.lng,
-                    currentHeading = heading
-                )
-            }
+            instance?.engines?.get(uid)?.jumpToWaypoint(index, waypoints)
         }
 
         fun resetSim() {
-            _auto1.value = AutoSimState("demo_auto_1", "Demo Auto 1", "TS 09 DEMO 1", currentLat = 17.29421, currentLng = 78.56753)
-            _auto2.value = AutoSimState("demo_auto_2", "Demo Auto 2", "TS 09 DEMO 2", currentLat = 17.27880, currentLng = 78.55730, currentWaypointIndex = 5)
+            instance?.engines?.values?.forEach { it.reset() }
         }
 
         private fun calculateHeading(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
@@ -93,122 +79,184 @@ class SimForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         startInForeground()
-        startSimulationLoop()
+        initializeEngines()
     }
 
-    private fun startSimulationLoop() {
-        simJob?.cancel()
-        simJob = serviceScope.launch {
-            while (isActive) {
-                tickAuto(_auto1)
-                tickAuto(_auto2)
-                delay(1000)
+    private fun initializeEngines() {
+        engines["demo_auto_1"] = AutoSimEngine(_auto1, "ROUTE_BALAPUR_SPHOORTHY")
+        engines["demo_auto_2"] = AutoSimEngine(_auto2, "ROUTE_RINGROAD_SANTOSHNAGAR")
+        engines.values.forEach { it.start() }
+    }
+
+    inner class AutoSimEngine(
+        private val autoFlow: MutableStateFlow<AutoSimState>,
+        private val routeId: String
+    ) {
+        private var simJob: Job? = null
+
+        fun start() {
+            simJob?.cancel()
+            simJob = serviceScope.launch {
+                while (isActive) {
+                    tick()
+                    delay(1000)
+                }
             }
         }
-    }
 
-    private fun tickAuto(autoFlow: MutableStateFlow<AutoSimState>) {
-        val state = autoFlow.value
-        if (!state.isRunning) {
-            // Even if stopped, we still push once to ensure Firebase has the correct "Stopped" speed
-            pushToFirebase(state)
-            return
+        fun toggleRunning() {
+            autoFlow.update { it.copy(isRunning = !it.isRunning) }
+            if (!autoFlow.value.isRunning) {
+                pushToFirebase(autoFlow.value.copy(speedMs = 0f))
+            }
         }
 
-        val waypoints = DemoSimulatorViewModel.waypointsList
-        var index = state.currentWaypointIndex
-        var frac = state.fraction
-
-        if (index >= waypoints.size - 1) {
-            index = 0
-            frac = 0.0
+        fun updateSpeed(speedMs: Float) {
+            autoFlow.update { it.copy(speedMs = speedMs) }
         }
 
-        val p1 = waypoints[index]
-        val p2 = waypoints[index + 1]
+        fun jumpToWaypoint(index: Int, waypoints: List<DemoLatLng>) {
+            val safeIndex = index.coerceIn(0, waypoints.size - 1)
+            val p = waypoints[safeIndex]
+            val nextIndex = if (safeIndex < waypoints.size - 1) safeIndex else safeIndex - 1
+            val heading = calculateHeading(waypoints[nextIndex].lat, waypoints[nextIndex].lng, waypoints[nextIndex + 1].lat, waypoints[nextIndex + 1].lng)
 
-        val segDist = calculateDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
-        val distMoved = state.speedMs * 1.0
-        val fracMoved = if (segDist > 0) distMoved / segDist else 1.0
-
-        frac += fracMoved
-        while (frac >= 1.0 && index < waypoints.size - 1) {
-            frac -= 1.0
-            index++
+            autoFlow.update {
+                it.copy(
+                    currentWaypointIndex = safeIndex,
+                    fraction = 0.0,
+                    currentLat = p.lat,
+                    currentLng = p.lng,
+                    currentHeading = heading
+                )
+            }
+            pushToFirebase(autoFlow.value)
         }
 
-        if (index >= waypoints.size - 1) {
-            index = 0
-            frac = 0.0
+        fun reset() {
+            val initial = if (autoFlow.value.uid == "demo_auto_1") {
+                AutoSimState("demo_auto_1", "Demo Auto 1", "TS 09 DEMO 1", currentLat = 17.29421, currentLng = 78.56753)
+            } else {
+                AutoSimState("demo_auto_2", "Demo Auto 2", "TS 09 DEMO 2", currentLat = 17.27880, currentLng = 78.55730, currentWaypointIndex = 5)
+            }
+            autoFlow.value = initial
+            clearFromFirebase(initial.uid)
         }
 
-        val currentP1 = waypoints[index]
-        val currentP2 = waypoints[index + 1]
-        val nextLat = currentP1.lat + (currentP2.lat - currentP1.lat) * frac
-        val nextLng = currentP1.lng + (currentP2.lng - currentP1.lng) * frac
-        val heading = calculateHeading(currentP1.lat, currentP1.lng, currentP2.lat, currentP2.lng)
-        val nearestStop = findNearestStop(nextLat, nextLng)
+        private fun tick() {
+            val state = autoFlow.value
+            if (!state.isRunning) {
+                pushToFirebase(state)
+                return
+            }
 
-        autoFlow.update {
-            it.copy(
-                currentWaypointIndex = index,
-                fraction = frac,
-                currentLat = nextLat,
-                currentLng = nextLng,
-                currentHeading = heading,
-                currentStop = nearestStop,
-                isAvailableInFirebase = true
+            val waypoints = DemoSimulatorViewModel.waypointsList
+            var index = state.currentWaypointIndex
+            var frac = state.fraction
+
+            if (index >= waypoints.size - 1) {
+                index = 0
+                frac = 0.0
+            }
+
+            val p1 = waypoints[index]
+            val p2 = waypoints[index + 1]
+
+            val segDist = calculateDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
+            val distMoved = state.speedMs * 1.0
+            val fracMoved = if (segDist > 0) distMoved / segDist else 1.0
+
+            frac += fracMoved
+            while (frac >= 1.0 && index < waypoints.size - 1) {
+                frac -= 1.0
+                index++
+            }
+
+            if (index >= waypoints.size - 1) {
+                index = 0
+                frac = 0.0
+            }
+
+            val currentP1 = waypoints[index]
+            val currentP2 = waypoints[index + 1]
+            val nextLat = currentP1.lat + (currentP2.lat - currentP1.lat) * frac
+            val nextLng = currentP1.lng + (currentP2.lng - currentP1.lng) * frac
+            val heading = calculateHeading(currentP1.lat, currentP1.lng, currentP2.lat, currentP2.lng)
+            val nearestStop = findNearestStop(nextLat, nextLng)
+
+            autoFlow.update {
+                it.copy(
+                    currentWaypointIndex = index,
+                    fraction = frac,
+                    currentLat = nextLat,
+                    currentLng = nextLng,
+                    currentHeading = heading,
+                    currentStop = nearestStop,
+                    isAvailableInFirebase = true
+                )
+            }
+
+            pushToFirebase(autoFlow.value)
+        }
+
+        private fun pushToFirebase(state: AutoSimState) {
+            val currentTimestampStr = repository.currentTime()
+            val profileData = mapOf(
+                "uid" to state.uid,
+                "name" to state.name,
+                "driverName" to state.name,
+                "vehicleNumber" to state.vehicleNumber,
+                "vehicleType" to "Shared Auto",
+                "isAvailable" to true,
+                "availableSeats" to state.availableSeats,
+                "totalSeats" to state.totalSeats,
+                "routeId" to routeId,
+                "activeDirection" to "FORWARD",
+                "currentStop" to state.currentStop,
+                "lastUpdated" to currentTimestampStr
+            )
+
+            repository.updateSimulatedDriverProfile(state.uid, profileData)
+
+            val liveLoc = DriverLiveLocation(
+                lat = state.currentLat,
+                lng = state.currentLng,
+                heading = state.currentHeading,
+                speed = if (state.isRunning) state.speedMs else 0f,
+                lastUpdated = currentTimestampStr,
+                isOnline = true,
+                routeId = routeId,
+                activeDirection = "FORWARD",
+                currentStop = state.currentStop
+            )
+            repository.updateLiveLocation(state.uid, liveLoc)
+
+            val mockLocation = android.location.Location("demo").apply {
+                latitude = state.currentLat
+                longitude = state.currentLng
+                bearing = state.currentHeading
+                speed = if (state.isRunning) state.speedMs else 0f
+                time = System.currentTimeMillis()
+            }
+            repository.updateLiveTracking(
+                uid = state.uid,
+                location = mockLocation,
+                isRideActive = false
             )
         }
 
-        pushToFirebase(autoFlow.value)
-    }
-
-    private fun pushToFirebase(state: AutoSimState) {
-        val currentTimestampStr = repository.currentTime()
-        val profileData = mapOf(
-            "uid" to state.uid,
-            "name" to state.name,
-            "driverName" to state.name,
-            "vehicleNumber" to state.vehicleNumber,
-            "vehicleType" to "Shared Auto",
-            "isAvailable" to true,
-            "availableSeats" to state.availableSeats,
-            "totalSeats" to state.totalSeats,
-            "routeId" to RouteData.ROUTE_ID,
-            "activeDirection" to "FORWARD",
-            "currentStop" to state.currentStop,
-            "lastUpdated" to currentTimestampStr
-        )
-
-        repository.updateSimulatedDriverProfile(state.uid, profileData)
-
-        val liveLoc = DriverLiveLocation(
-            lat = state.currentLat,
-            lng = state.currentLng,
-            heading = state.currentHeading,
-            speed = if (state.isRunning) state.speedMs else 0f,
-            isOnline = true,
-            routeId = RouteData.ROUTE_ID,
-            activeDirection = "FORWARD",
-            currentStop = state.currentStop
-        )
-        repository.updateLiveLocation(state.uid, liveLoc)
-
-        val mockLocation = android.location.Location("demo").apply {
-            latitude = state.currentLat
-            longitude = state.currentLng
-            bearing = state.currentHeading
-            speed = if (state.isRunning) state.speedMs else 0f
-            time = System.currentTimeMillis()
+        private fun clearFromFirebase(uid: String) {
+            val currentTimestampStr = repository.currentTime()
+            val profileData = mapOf(
+                "isAvailable" to false,
+                "lastUpdated" to currentTimestampStr
+            )
+            repository.updateSimulatedDriverProfile(uid, profileData)
+            repository.updateLiveLocation(uid, DriverLiveLocation(isOnline = false))
         }
-        repository.updateLiveTracking(
-            uid = state.uid,
-            location = mockLocation,
-            isRideActive = false
-        )
     }
 
     private fun findNearestStop(lat: Double, lng: Double): String {
@@ -243,7 +291,16 @@ class SimForegroundService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
-        startForeground(NOTIFICATION_ID, notification)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -262,6 +319,7 @@ class SimForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
         serviceScope.cancel()
     }
 }

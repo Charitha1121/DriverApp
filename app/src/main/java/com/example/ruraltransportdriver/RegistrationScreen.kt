@@ -48,11 +48,25 @@ fun RegistrationScreen(
 
     var totalSeatsText by remember { mutableStateOf("4") }
 
-    val routes = RouteData.predefinedRoutes
-    var selectedRoute by remember { mutableStateOf(routes.first()) }
-    var routeExpanded by remember { mutableStateOf(false) }
-
     val scrollState = rememberScrollState()
+
+    // Dynamic state for typed inputs
+    var sourceText by remember { mutableStateOf("") }
+    var destText by remember { mutableStateOf("") }
+    var sourceFocused by remember { mutableStateOf(false) }
+    var destFocused by remember { mutableStateOf(false) }
+
+    val allStops = RouteData.getAllCachedStops()
+
+    val filteredSourceSuggestions = remember(sourceText, allStops) {
+        if (sourceText.isBlank()) emptyList()
+        else allStops.filter { it.name.contains(sourceText, ignoreCase = true) }
+    }
+
+    val filteredDestSuggestions = remember(destText, allStops) {
+        if (destText.isBlank()) emptyList()
+        else allStops.filter { it.name.contains(destText, ignoreCase = true) }
+    }
 
     Column(
         modifier = Modifier
@@ -242,60 +256,113 @@ fun RegistrationScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Route Selection Dropdown
-        ExposedDropdownMenuBox(
-            expanded = routeExpanded,
-            onExpandedChange = { routeExpanded = !routeExpanded },
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        // Dynamic Source Input Field with Autocomplete suggestions
+        Box(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
-                value = selectedRoute.name,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Primary Route Corridor *") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = routeExpanded) },
-                modifier = Modifier
-                    .menuAnchor()
-                    .fillMaxWidth()
+                value = sourceText,
+                onValueChange = {
+                    sourceText = it.uppercase()
+                    if (errorMessage != null) onClearError()
+                },
+                label = { Text("Trip Source / Start Stop *") },
+                leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = "Source") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
             )
-            ExposedDropdownMenu(
-                expanded = routeExpanded,
-                onDismissRequest = { routeExpanded = false }
-            ) {
-                routes.forEach { route ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(route.name, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "Stops: ${route.stops.joinToString(" → ")}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        onClick = {
-                            selectedRoute = route
-                            routeExpanded = false
-                        }
-                    )
+            if (filteredSourceSuggestions.isNotEmpty()) {
+                DropdownMenu(
+                    expanded = true,
+                    onDismissRequest = { /* keep active or dismiss by clearing state */ }
+                ) {
+                    filteredSourceSuggestions.forEach { stop ->
+                        DropdownMenuItem(
+                            text = { Text(stop.name) },
+                            onClick = { sourceText = stop.name.uppercase() }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Dynamic Destination Input Field with Autocomplete suggestions
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = destText,
+                onValueChange = {
+                    destText = it.uppercase()
+                    if (errorMessage != null) onClearError()
+                },
+                label = { Text("Trip Destination / End Stop *") },
+                leadingIcon = { Icon(Icons.Default.Navigation, contentDescription = "Destination") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (filteredDestSuggestions.isNotEmpty()) {
+                DropdownMenu(
+                    expanded = true,
+                    onDismissRequest = { }
+                ) {
+                    filteredDestSuggestions.forEach { stop ->
+                        DropdownMenuItem(
+                            text = { Text(stop.name) },
+                            onClick = { destText = stop.name.uppercase() }
+                        )
+                    }
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Submit Button
+        // Submit Button Logic
         val seatsInt = totalSeatsText.toIntOrNull() ?: 0
         val isFormFilled = name.isNotBlank() &&
                 phone.length == 10 &&
                 email.isNotBlank() &&
                 password.length >= 6 &&
                 vehicleNumber.isNotBlank() &&
-                seatsInt in 1..15
+                seatsInt in 1..15 &&
+                sourceText.isNotBlank() &&
+                destText.isNotBlank()
 
         Button(
             onClick = {
+                val sClean = sourceText.trim().uppercase()
+                val dClean = destText.trim().uppercase()
+
+                // Generate sanitized alphanumeric ID strings for references from UPPERCASE names
+                val sId = allStops.firstOrNull { it.name.equals(sClean, ignoreCase = true) }?.id
+                    ?: "stop_${sClean.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9_]"), "_")}"
+                val dId = allStops.firstOrNull { it.name.equals(dClean, ignoreCase = true) }?.id
+                    ?: "stop_${dClean.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9_]"), "_")}"
+
+                // Save new stops to 'stops/' database node if they don't exist
+                if (allStops.none { it.name.equals(sClean, ignoreCase = true) }) {
+                    val fallback = RouteData.stops.firstOrNull()
+                    FirebaseRepository().saveStop(DbStop(sId, sClean, fallback?.latitude ?: 0.0, fallback?.longitude ?: 0.0))
+                }
+                if (allStops.none { it.name.equals(dClean, ignoreCase = true) }) {
+                    val fallback = RouteData.stops.firstOrNull()
+                    FirebaseRepository().saveStop(DbStop(dId, dClean, fallback?.latitude ?: 0.0, fallback?.longitude ?: 0.0))
+                }
+
+                // Establish deterministic routeId string
+                val finalRouteId = "route_${sId.replace("stop_", "")}_${dId.replace("stop_", "")}"
+                val finalRouteName = "$sClean - $dClean"
+
+                // Save new route to 'routes/' database node
+                val newDbRoute = DbRoute(
+                    id = finalRouteId,
+                    name = finalRouteName,
+                    sourceStopId = sId,
+                    destinationStopId = dId,
+                    stopOrder = listOf(sId, dId),
+                    status = "active" 
+                )
+                FirebaseRepository().saveRoute(newDbRoute)
+
                 onRegisterSubmitted(
                     name,
                     phone,
@@ -304,8 +371,8 @@ fun RegistrationScreen(
                     vehicleNumber,
                     selectedVehicleType,
                     seatsInt,
-                    selectedRoute.id,
-                    selectedRoute.name
+                    finalRouteId,
+                    finalRouteName
                 )
             },
             modifier = Modifier

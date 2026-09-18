@@ -92,7 +92,7 @@ class DashboardViewModel(
         observeAllRequests(profile)
 
         if (profile.isAvailable) {
-            subscribeToDemand(profile.routeId, RouteDirection.FORWARD)
+            subscribeToDemand(profile.routeId, profile.activeDirection)
         }
 
         // Arm Firebase onDisconnect to reset isRideActive = false if driver loses connection
@@ -116,7 +116,7 @@ class DashboardViewModel(
 
                 if (updatedProfile.isAvailable) {
                     if (!oldAvailability || !RouteData.isSameRoute(oldRouteId, updatedProfile.routeId)) {
-                        subscribeToDemand(updatedProfile.routeId, RouteDirection.FORWARD)
+                        subscribeToDemand(updatedProfile.routeId, updatedProfile.activeDirection)
                     }
                 } else if (oldAvailability) {
                     unsubscribeDemand()
@@ -184,19 +184,22 @@ class DashboardViewModel(
         _statusMessage.value = null
         _errorMessage.value = null
 
+        val selectedDirection = direction ?: driver.activeDirection
+
         repository.updateDriverAvailability(
             uid = driver.uid,
             isAvailable = isOnline,
-            activeDirection = RouteDirection.FORWARD,
+            activeDirection = selectedDirection,
             onSuccess = {
                 _isOperating.value = false
                 _currentProfile.value = _currentProfile.value.copy(
-                    isAvailable = isOnline
+                    isAvailable = isOnline,
+                    activeDirection = selectedDirection
                 )
 
                 if (isOnline) {
                     _statusMessage.value = "🟢 You are now ONLINE"
-                    subscribeToDemand(driver.routeId, RouteDirection.FORWARD)
+                    subscribeToDemand(driver.routeId, selectedDirection)
                     publishLiveLocationNow()
                 } else {
                     _statusMessage.value = "🔴 You are now OFFLINE"
@@ -592,8 +595,8 @@ class DashboardViewModel(
                         lastUpdated = repository.currentTime(),
                         isOnline = _currentProfile.value.isAvailable,
                         routeId = _currentProfile.value.routeId,
-                        activeDirection = "",
-                        currentStop = ""
+                        activeDirection = _currentProfile.value.activeDirection.name,
+                        currentStop = _currentProfile.value.currentStop
                     )
                     repository.updateLiveLocation(driver.uid, liveLoc)
                 }
@@ -703,8 +706,8 @@ class DashboardViewModel(
             lastUpdated = repository.currentTime(),
             isOnline = driver.isAvailable,
             routeId = driver.routeId,
-            activeDirection = "",
-            currentStop = ""
+            activeDirection = driver.activeDirection.name,
+            currentStop = driver.currentStop
         )
         repository.updateLiveLocation(driver.uid, liveLoc)
     }

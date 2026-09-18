@@ -25,6 +25,8 @@ class FirebaseRepository {
         const val NODE_AUTO_STATUS = "auto_status"
         const val NODE_PASSENGER_DEMAND = "passenger_demand"
         const val NODE_LIVE_TRACKING = "liveTracking"
+        const val NODE_ROUTES = "routes"
+        const val NODE_STOPS = "stops"
     }
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -224,6 +226,7 @@ class FirebaseRepository {
             "isAvailable" to isAvailable,
             "lastUpdated" to currentTime()
         )
+        activeDirection?.let { updates["activeDirection"] = it.name }
 
         database.child(NODE_DRIVERS).child(uid)
             .updateChildren(updates)
@@ -797,6 +800,106 @@ class FirebaseRepository {
             .child(routeId)
             .child(direction.name)
             .removeEventListener(listener)
+    }
+
+    // =========================================================
+    // DYNAMIC ROUTES & STOPS METHODS
+    // =========================================================
+
+    fun saveStop(stop: DbStop, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        database.child(NODE_STOPS).child(stop.id).setValue(stop)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.localizedMessage ?: "Failed to save stop") }
+    }
+
+    fun saveRoute(route: DbRoute, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        database.child(NODE_ROUTES).child(route.id).setValue(route)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.localizedMessage ?: "Failed to save route") }
+    }
+
+    fun observeAllStops(onDataChanged: (List<DbStop>) -> Unit): ValueEventListener {
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val list = mutableListOf<DbStop>()
+                for (child in snapshot.children) {
+                    val item = child.getValue(DbStop::class.java)
+                    if (item != null) list.add(item)
+                }
+                onDataChanged(list)
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        database.child(NODE_STOPS).addValueEventListener(listener)
+        return listener
+    }
+
+    fun observeAllRoutes(onDataChanged: (List<DbRoute>) -> Unit): ValueEventListener {
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val list = mutableListOf<DbRoute>()
+                for (child in snapshot.children) {
+                    val item = child.getValue(DbRoute::class.java)
+                    if (item != null) list.add(item)
+                }
+                onDataChanged(list)
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        database.child(NODE_ROUTES).addValueEventListener(listener)
+        return listener
+    }
+
+    fun seedInitialRouteData() {
+        database.child(NODE_ROUTES).get().addOnSuccessListener { snapshot ->
+            if (!snapshot.exists() || snapshot.childrenCount == 0L) {
+                // Seed initial stops in UPPERCASE
+                val seedStops = mapOf(
+                    "stop_gurramguda" to DbStop("stop_gurramguda", "GURRAMGUDA", 17.29421, 78.56753),
+                    "stop_jaysuryapatnam" to DbStop("stop_jaysuryapatnam", "JAY SURYAPATNAM", 17.2788, 78.5573),
+                    "stop_sphoorthy" to DbStop("stop_sphoorthy", "SPHOORTHY COLLEGE", 17.28218, 78.55251),
+                    "stop_nadergul" to DbStop("stop_nadergul", "NADERGUL", 17.27464, 78.53995),
+                    "stop_ibp" to DbStop("stop_ibp", "IBP PETROL PUMP, NAGARJUNA SAGAR ROAD", 17.2945, 78.5650),
+                    "stop_gurramguda_v" to DbStop("stop_gurramguda_v", "GURRAMGUDA VILLAGE", 17.2940, 78.5660),
+                    "stop_gurramguda_cr" to DbStop("stop_gurramguda_cr", "GURRAMGUDA CROSS ROAD", 17.3079, 78.5674),
+                    "stop_bn_reddy" to DbStop("stop_bn_reddy", "B.N. REDDY NAGAR BUS STOP", 17.3235, 78.5630),
+                    "stop_vanasthalipuram" to DbStop("stop_vanasthalipuram", "VANASTHALIPURAM", 17.3350, 78.5510),
+                    "stop_bairamalguda" to DbStop("stop_bairamalguda", "BAIRAMALGUDA CROSS ROAD", 17.3440, 78.5512),
+                    "stop_sagar_ringroad" to DbStop("stop_sagar_ringroad", "SAGAR RING ROAD (LB NAGAR)", 17.3484, 78.5510),
+                    "stop_lb_nagar" to DbStop("stop_lb_nagar", "L.B. NAGAR METRO STATION", 17.3502, 78.5475),
+                    "stop_kothapet" to DbStop("stop_kothapet", "KOTHAPET FRUIT MARKET", 17.3565, 78.5450),
+                    "stop_chaitanyapuri" to DbStop("stop_chaitanyapuri", "CHAITANYAPURI METRO STATION", 17.3620, 78.5430),
+                    "stop_dilsukhnagar" to DbStop("stop_dilsukhnagar", "DILSUKHNAGAR BUS STATION", 17.3687, 78.5247),
+                    "stop_moosarambagh" to DbStop("stop_moosarambagh", "MOOSARAMBAGH X ROAD", 17.3712, 78.5135),
+                    "stop_saidabad" to DbStop("stop_saidabad", "SAIDABAD COLONY", 17.3615, 78.5100),
+                    "stop_santoshnagar" to DbStop("stop_santoshnagar", "SANTOSHNAGAR CROSS ROADS", 17.3544, 78.5076),
+                    "stop_balapur" to DbStop("stop_balapur", "BALAPUR X ROAD", 17.3020, 78.5150),
+                    "stop_udyog" to DbStop("stop_udyog", "UDYOG NAGAR", 17.2965, 78.5210),
+                    "stop_badangpet" to DbStop("stop_badangpet", "BADANGPET CHERUVU BUS STOP", 17.2885, 78.5320),
+                    "stop_mvsr" to DbStop("stop_mvsr", "MVSR ENGINEERING COLLEGE, NADERGUL", 17.2831, 78.5492),
+                    "stop_kammaguda" to DbStop("stop_kammaguda", "KAMMAGUDA BUS STOP", 17.2840, 78.5570),
+                    "stop_nadergul_v" to DbStop("stop_nadergul_v", "NADERGUL VILLAGE", 17.2985, 78.5670),
+                    "stop_sphoorthy_eng" to DbStop("stop_sphoorthy_eng", "SPHOORTHY ENGINEERING COLLEGE", 17.2960, 78.5675)
+                )
+
+                for ((id, stop) in seedStops) {
+                    database.child(NODE_STOPS).child(id).setValue(stop)
+                }
+
+                // Seed initial routes in UPPERCASE
+                val seedRoutes = listOf(
+                    DbRoute("ROUTE_01", "GURRAMGUDA CORRIDOR", "stop_gurramguda", "stop_nadergul", listOf("stop_gurramguda", "stop_jaysuryapatnam", "stop_sphoorthy", "stop_nadergul")),
+                    DbRoute("ROUTE_IBP_GURRAMGUDA", "IBP - GURRAMGUDA LOCAL", "stop_ibp", "stop_gurramguda_v", listOf("stop_ibp", "stop_gurramguda_v")),
+                    DbRoute("ROUTE_GURRAMGUDA_RINGROAD", "GURRAMGUDA - SAGAR RING ROAD", "stop_gurramguda_v", "stop_sagar_ringroad", listOf("stop_gurramguda_v", "stop_gurramguda_cr", "stop_bn_reddy", "stop_vanasthalipuram", "stop_bairamalguda", "stop_sagar_ringroad")),
+                    DbRoute("ROUTE_RINGROAD_SANTOSHNAGAR", "SAGAR RING ROAD - SANTOSHNAGAR", "stop_sagar_ringroad", "stop_santoshnagar", listOf("stop_sagar_ringroad", "stop_lb_nagar", "stop_kothapet", "stop_chaitanyapuri", "stop_dilsukhnagar", "stop_moosarambagh", "stop_saidabad", "stop_santoshnagar")),
+                    DbRoute("ROUTE_BALAPUR_SPHOORTHY", "BALAPUR - SPHOORTHY COLLEGE", "stop_balapur", "stop_sphoorthy_eng", listOf("stop_balapur", "stop_udyog", "stop_badangpet", "stop_mvsr", "stop_kammaguda", "stop_nadergul_v", "stop_sphoorthy_eng"))
+                )
+
+                for (route in seedRoutes) {
+                    database.child(NODE_ROUTES).child(route.id).setValue(route)
+                }
+            }
+        }
     }
 
     // =========================================================

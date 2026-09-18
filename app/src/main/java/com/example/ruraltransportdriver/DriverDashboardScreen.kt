@@ -744,7 +744,7 @@ fun DriverDashboardScreen(
                     }
 
                     Text(
-                        text = "Travelling on Gurramguda Corridor",
+                        text = "Travelling on ${profile.routeName}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
