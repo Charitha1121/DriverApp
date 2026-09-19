@@ -21,6 +21,17 @@ fun DemoSimulatorScreen(
 ) {
     val auto1 by viewModel.auto1.collectAsState()
     val auto2 by viewModel.auto2.collectAsState()
+    val auto3 by viewModel.auto3.collectAsState()
+    val auto4 by viewModel.auto4.collectAsState()
+    val auto5 by viewModel.auto5.collectAsState()
+    val auto6 by viewModel.auto6.collectAsState()
+    val auto7 by viewModel.auto7.collectAsState()
+    val auto8 by viewModel.auto8.collectAsState()
+    val auto9 by viewModel.auto9.collectAsState()
+    val auto10 by viewModel.auto10.collectAsState()
+    val auto11 by viewModel.auto11.collectAsState()
+    val auto12 by viewModel.auto12.collectAsState()
+
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -59,25 +70,18 @@ fun DemoSimulatorScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            AutoControlCard(
-                state = auto1,
-                totalWaypoints = viewModel.waypoints.size,
-                distance = viewModel.calculateDistanceToDestination(auto1),
-                eta = viewModel.calculateEtaMinutes(auto1),
-                onToggle = { viewModel.toggleStartPause(auto1.uid) },
-                onSpeedChange = { viewModel.updateSpeed(auto1.uid, it) },
-                onJump = { viewModel.jumpToWaypoint(auto1.uid, it) }
-            )
-
-            AutoControlCard(
-                state = auto2,
-                totalWaypoints = viewModel.waypoints.size,
-                distance = viewModel.calculateDistanceToDestination(auto2),
-                eta = viewModel.calculateEtaMinutes(auto2),
-                onToggle = { viewModel.toggleStartPause(auto2.uid) },
-                onSpeedChange = { viewModel.updateSpeed(auto2.uid, it) },
-                onJump = { viewModel.jumpToWaypoint(auto2.uid, it) }
-            )
+            val autoList = listOf(auto1, auto2, auto3, auto4, auto5, auto6, auto7, auto8, auto9, auto10, auto11, auto12)
+            autoList.forEach { auto ->
+                AutoControlCard(
+                    state = auto,
+                    totalWaypoints = viewModel.getWaypointsForAuto(auto.uid).size,
+                    distance = viewModel.calculateDistanceToDestination(auto),
+                    eta = viewModel.calculateEtaMinutes(auto),
+                    onToggle = { viewModel.toggleStartPause(auto.uid) },
+                    onSpeedChange = { viewModel.updateSpeed(auto.uid, it) },
+                    onJump = { viewModel.jumpToWaypoint(auto.uid, it) }
+                )
+            }
         }
     }
 }

@@ -10,11 +10,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.google.android.gms.location.LocationServices
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,8 +58,17 @@ fun RegistrationScreen(
     // Dynamic state for typed inputs
     var sourceText by remember { mutableStateOf("") }
     var destText by remember { mutableStateOf("") }
-    var sourceFocused by remember { mutableStateOf(false) }
-    var destFocused by remember { mutableStateOf(false) }
+    
+    val context = LocalContext.current
+    var currentGpsLocation by remember { mutableStateOf<android.location.Location?>(null) }
+
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            LocationServices.getFusedLocationProviderClient(context).lastLocation.addOnSuccessListener { loc ->
+                currentGpsLocation = loc
+            }
+        }
+    }
 
     val allStops = RouteData.getAllCachedStops()
 
@@ -325,12 +339,22 @@ fun RegistrationScreen(
                 vehicleNumber.isNotBlank() &&
                 seatsInt in 1..15 &&
                 sourceText.isNotBlank() &&
-                destText.isNotBlank()
+                destText.isNotBlank() &&
+                !sourceText.equals(destText, ignoreCase = true)
 
         Button(
             onClick = {
                 val sClean = sourceText.trim().uppercase()
                 val dClean = destText.trim().uppercase()
+
+                // Final safety check: block registration if new stops are being created but GPS is unavailable
+                val needsGps = allStops.none { it.name.equals(sClean, ignoreCase = true) } ||
+                               allStops.none { it.name.equals(dClean, ignoreCase = true) }
+                
+                if (needsGps && currentGpsLocation == null) {
+                    // This could be improved with a snackbar or toast
+                    return@Button
+                }
 
                 // Generate sanitized alphanumeric ID strings for references from UPPERCASE names
                 val sId = allStops.firstOrNull { it.name.equals(sClean, ignoreCase = true) }?.id
@@ -340,12 +364,14 @@ fun RegistrationScreen(
 
                 // Save new stops to 'stops/' database node if they don't exist
                 if (allStops.none { it.name.equals(sClean, ignoreCase = true) }) {
-                    val fallback = RouteData.stops.firstOrNull()
-                    FirebaseRepository().saveStop(DbStop(sId, sClean, fallback?.latitude ?: 0.0, fallback?.longitude ?: 0.0))
+                    val lat = currentGpsLocation?.latitude ?: RouteData.stops.firstOrNull()?.latitude ?: 0.0
+                    val lng = currentGpsLocation?.longitude ?: RouteData.stops.firstOrNull()?.longitude ?: 0.0
+                    FirebaseRepository().saveStop(DbStop(sId, sClean, lat, lng))
                 }
                 if (allStops.none { it.name.equals(dClean, ignoreCase = true) }) {
-                    val fallback = RouteData.stops.firstOrNull()
-                    FirebaseRepository().saveStop(DbStop(dId, dClean, fallback?.latitude ?: 0.0, fallback?.longitude ?: 0.0))
+                    val lat = currentGpsLocation?.latitude ?: RouteData.stops.firstOrNull()?.latitude ?: 0.0
+                    val lng = currentGpsLocation?.longitude ?: RouteData.stops.firstOrNull()?.longitude ?: 0.0
+                    FirebaseRepository().saveStop(DbStop(dId, dClean, lat, lng))
                 }
 
                 // Establish deterministic routeId string

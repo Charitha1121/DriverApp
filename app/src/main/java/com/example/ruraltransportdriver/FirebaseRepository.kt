@@ -694,7 +694,8 @@ class FirebaseRepository {
     }
 
     /**
-     * Explicitly registers onDisconnect cleanup to set isRideActive = false.
+     * Explicitly registers onDisconnect cleanup to set isRideActive = false,
+     * isAvailable = false, and liveLocation/isOnline = false.
      * Enforces continuous resiliency across reconnections.
      */
     fun setupLiveTrackingOnDisconnect(uid: String) {
@@ -702,7 +703,12 @@ class FirebaseRepository {
         if (uid != currentUid) return
 
         val trackingRef = database.child(NODE_DRIVERS).child(uid).child(NODE_LIVE_TRACKING).child("isRideActive")
+        val availabilityRef = database.child(NODE_DRIVERS).child(uid).child("isAvailable")
+        val onlineRef = database.child(NODE_DRIVERS).child(uid).child("liveLocation").child("isOnline")
+
         trackingRef.onDisconnect().setValue(false)
+        availabilityRef.onDisconnect().setValue(false)
+        onlineRef.onDisconnect().setValue(false)
 
         // Resiliency loop: listen to client connection lifecycle state changes to re-arm onDisconnect listeners
         database.child(".info/connected").addValueEventListener(object : ValueEventListener {
@@ -710,6 +716,8 @@ class FirebaseRepository {
                 val connected = snapshot.getValue(Boolean::class.java) ?: false
                 if (connected) {
                     trackingRef.onDisconnect().setValue(false)
+                    availabilityRef.onDisconnect().setValue(false)
+                    onlineRef.onDisconnect().setValue(false)
                 }
             }
             override fun onCancelled(error: DatabaseError) {

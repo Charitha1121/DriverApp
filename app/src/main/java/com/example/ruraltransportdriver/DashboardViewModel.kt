@@ -199,6 +199,7 @@ class DashboardViewModel(
 
                 if (isOnline) {
                     _statusMessage.value = "🟢 You are now ONLINE"
+                    resetLocationThrottles()
                     subscribeToDemand(driver.routeId, selectedDirection)
                     publishLiveLocationNow()
                 } else {
@@ -691,12 +692,13 @@ class DashboardViewModel(
         
         // If GPS is unavailable, fall back to the coordinates of the current stop 
         // to ensure the driver remains visible to passengers at their last known location.
-        val currentStopObj = RouteData.stops.firstOrNull { 
+        val allStops = RouteData.getAllCachedStops()
+        val currentStopObj = allStops.firstOrNull { 
             it.name.equals(driver.currentStop, ignoreCase = true) 
         }
         
-        val lat = lastLoc?.latitude ?: currentStopObj?.latitude ?: 0.0
-        val lng = lastLoc?.longitude ?: currentStopObj?.longitude ?: 0.0
+        val lat = lastLoc?.latitude ?: currentStopObj?.lat ?: 0.0
+        val lng = lastLoc?.longitude ?: currentStopObj?.lng ?: 0.0
 
         val liveLoc = DriverLiveLocation(
             lat = lat,
@@ -719,6 +721,15 @@ class DashboardViewModel(
     fun clearFeedback() {
         _statusMessage.value = null
         _errorMessage.value = null
+    }
+
+    private fun resetLocationThrottles() {
+        lastLiveLocationWriteTimestamp = 0L
+        lastLiveLocationLat = 0.0
+        lastLiveLocationLng = 0.0
+        lastLiveTrackingWriteTimestamp = 0L
+        lastLiveTrackingLat = 0.0
+        lastLiveTrackingLng = 0.0
     }
 
     // ---------------------------------------------------------
